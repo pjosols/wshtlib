@@ -344,3 +344,20 @@ class TestTraceIdInjection:
         monkeypatch.setitem(__import__("sys").modules, "wshtlib.context", fake_mod)
         entry = self._emit()
         assert "trace_id" not in entry
+
+    def test_unexpected_exception_propagates(self, monkeypatch):
+        """Exceptions other than ImportError/AttributeError must not be swallowed."""
+        import pytest
+        import types
+
+        fake_mod = types.ModuleType("wshtlib.context")
+
+        def _boom():
+            raise RuntimeError("unexpected")
+
+        fake_mod.get_context = _boom  # type: ignore[attr-defined]
+        monkeypatch.setitem(__import__("sys").modules, "wshtlib.context", fake_mod)
+        formatter = _fresh_logger("trace-unexpected")._formatter
+
+        with pytest.raises(RuntimeError, match="unexpected"):
+            formatter._get_trace_id()
