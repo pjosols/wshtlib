@@ -87,10 +87,11 @@ Initialises request context, logs `method`, `path`, `status`, `duration_ms` per 
 ### Utilities
 
 ```python
-from wshtlib import require_env, require_https_url
+from wshtlib import require_env, require_https_url, require_secret
 
 db_url = require_env("DATABASE_URL")          # raises RuntimeError if missing/empty
 endpoint = require_https_url(require_env("API_URL"))  # raises ValueError if not https
+api_key = require_secret("api/key")           # raises RuntimeError if missing/empty, cached
 ```
 
 ## Environment variables

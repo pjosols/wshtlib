@@ -15,6 +15,7 @@ from wshtlib.http import require_https_url
 from wshtlib.logger import get_logger, set_lambda_context
 from wshtlib.metrics import MetricsContext
 from wshtlib.metrics import metrics as default_metrics
+from wshtlib.secrets import require_secret
 
 __all__ = [
     "clear_context",
@@ -29,4 +30,5 @@ __all__ = [
     "set_lambda_context",
     "MetricsContext",
     "default_metrics",
+    "require_secret",
 ]

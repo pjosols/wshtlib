@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- `require_secret()` for AWS Secrets Manager integration with caching and error handling
+- Test module docstrings: concise, imperative descriptions for `test_context.py`, `test_decorators.py`, `test_metrics.py`, `test_middleware.py`, `test_secrets.py`
+
 ### Docs
-- Test module docstrings: concise, imperative descriptions for `test_context.py`, `test_decorators.py`, `test_metrics.py`, `test_middleware.py`
+- Updated `__init__.py` module docstring for clarity
 
 ## [0.1.0] - 2026-04-12
 

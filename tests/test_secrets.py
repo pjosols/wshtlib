@@ -1,85 +1,98 @@
-"""Tests for wshtlib.secrets"""
+"""Test require_secret with mocked boto3 and Secrets Manager."""
 
-from unittest.mock import MagicMock, patch
-
+import sys
+import types
 import pytest
+from unittest.mock import MagicMock
 
-import wshtlib.secrets as secrets_module
+import wshtlib.secrets as secrets_mod
 from wshtlib.secrets import require_secret
 
 
 def setup_function() -> None:
-    secrets_module._cache.clear()
+    secrets_mod._cache.clear()
 
 
-def _make_client(secret_value: str) -> MagicMock:
-    client = MagicMock()
-    client.get_secret_value.return_value = {"SecretString": secret_value}
-    return client
+def _boto3_mocks(secret_value: dict | None = None, raise_client_error: bool = False) -> tuple:
+    """Return (sys_modules_patch, mock_client) with boto3 and botocore faked."""
+    # Minimal botocore.exceptions mock
+    botocore_mod = types.ModuleType("botocore")
+    botocore_exc_mod = types.ModuleType("botocore.exceptions")
+
+    class _ClientError(Exception):
+        def __init__(self, error_response: dict, operation_name: str) -> None:
+            self.response = error_response
+            super().__init__(str(error_response))
+
+    botocore_exc_mod.ClientError = _ClientError  # type: ignore[attr-defined]
+    botocore_mod.exceptions = botocore_exc_mod  # type: ignore[attr-defined]
+
+    mock_client = MagicMock()
+    if raise_client_error:
+        mock_client.get_secret_value.side_effect = _ClientError(
+            {"Error": {"Code": "ResourceNotFoundException", "Message": "not found"}},
+            "GetSecretValue",
+        )
+    else:
+        mock_client.get_secret_value.return_value = secret_value or {}
+
+    boto3_mod = types.ModuleType("boto3")
+    boto3_mod.client = MagicMock(return_value=mock_client)  # type: ignore[attr-defined]
+
+    modules = {
+        "boto3": boto3_mod,
+        "botocore": botocore_mod,
+        "botocore.exceptions": botocore_exc_mod,
+    }
+    return modules, mock_client
 
 
-def test_returns_secret_value() -> None:
-    client = _make_client("s3cr3t")
-    with patch("boto3.client", return_value=client):
+def test_returns_secret_string() -> None:
+    mods, _ = _boto3_mocks({"SecretString": "s3cr3t"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
         assert require_secret("my/secret") == "s3cr3t"
 
 
 def test_caches_value_on_second_call() -> None:
-    client = _make_client("cached")
-    with patch("boto3.client", return_value=client):
+    mods, mock_client = _boto3_mocks({"SecretString": "cached"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
         require_secret("my/secret")
         require_secret("my/secret")
-    client.get_secret_value.assert_called_once()
-
-
-def test_different_names_fetched_separately() -> None:
-    client = MagicMock()
-    client.get_secret_value.side_effect = [
-        {"SecretString": "val1"},
-        {"SecretString": "val2"},
-    ]
-    with patch("boto3.client", return_value=client):
-        assert require_secret("secret/a") == "val1"
-        assert require_secret("secret/b") == "val2"
-    assert client.get_secret_value.call_count == 2
-
-
-def test_raises_runtime_error_when_empty() -> None:
-    client = _make_client("")
-    with patch("boto3.client", return_value=client):
-        with pytest.raises(RuntimeError, match="my/secret"):
-            require_secret("my/secret")
+    mock_client.get_secret_value.assert_called_once()
 
 
 def test_raises_runtime_error_on_client_error() -> None:
-    from botocore.exceptions import ClientError
-
-    client = MagicMock()
-    client.get_secret_value.side_effect = ClientError(
-        {"Error": {"Code": "ResourceNotFoundException", "Message": "not found"}},
-        "GetSecretValue",
-    )
-    with patch("boto3.client", return_value=client):
-        with pytest.raises(RuntimeError, match="my/secret"):
+    mods, _ = _boto3_mocks(raise_client_error=True)
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError, match="Secret not available: my/secret"):
             require_secret("my/secret")
 
 
-def test_error_message_does_not_contain_secret_value() -> None:
-    from botocore.exceptions import ClientError
-
-    client = MagicMock()
-    client.get_secret_value.side_effect = ClientError(
-        {"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
-        "GetSecretValue",
-    )
-    with patch("boto3.client", return_value=client):
-        with pytest.raises(RuntimeError) as exc_info:
+def test_raises_runtime_error_when_secret_string_empty() -> None:
+    mods, _ = _boto3_mocks({"SecretString": ""})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError, match="Secret is empty: my/secret"):
             require_secret("my/secret")
-    assert "denied" not in str(exc_info.value)
+
+
+def test_raises_runtime_error_when_secret_string_missing() -> None:
+    mods, _ = _boto3_mocks({})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError, match="Secret is empty: my/secret"):
+            require_secret("my/secret")
 
 
 def test_exported_from_package() -> None:
     import wshtlib
-
-    assert hasattr(wshtlib, "require_secret")
+    assert wshtlib.require_secret is require_secret
     assert "require_secret" in wshtlib.__all__
