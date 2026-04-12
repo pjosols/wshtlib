@@ -1,0 +1,9 @@
+
+[project]
+created = "2026-04-12"
+
+[loop]
+review_every = 5
+git_commits = true
+max_fix_tasks = 3
+

@@ -1,0 +1,9 @@
+.ltc/
+.kiro/
+dist/
+build/
+*.egg-info/
+__pycache__/
+.venv/
+.coverage
+htmlcov/
