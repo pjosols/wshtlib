@@ -9,7 +9,7 @@ from wshtlib.logger import get_logger, set_lambda_context
 logger = get_logger("wshtlib.decorators")
 
 
-def lambda_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
+def bootstrap(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator for Lambda entry points.
 
     Handles warming events (``"source": "lambda-warming"``) — returns 200 early.
