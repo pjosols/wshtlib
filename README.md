@@ -50,7 +50,7 @@ Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `locati
 ### CloudWatch metrics (EMF)
 
 ```python
-from wshtlib import metrics
+from wshtlib.metrics import metrics
 
 metrics.count("OrderPlaced")
 metrics.put("Duration", 142.5, unit="Milliseconds")
