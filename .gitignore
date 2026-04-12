@@ -7,3 +7,8 @@ __pycache__/
 .venv/
 .coverage
 htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+QUEUE_STATUS.md
+ltc.toml

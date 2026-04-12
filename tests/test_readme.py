@@ -1,28 +1,27 @@
 """Tests that validate README.md code examples against actual source."""
 
-import importlib
 import io
 
 import pytest
 
 
-def test_lambda_handler_is_plain_decorator_not_factory() -> None:
-    """@lambda_handler is used directly, not called as a factory."""
+def test_bootstrap_is_plain_decorator_not_factory() -> None:
+    """@bootstrap is used directly, not called as a factory."""
     import wshtlib
 
     # Must be callable and wrap a function without being called first
     def handler(event: dict, context: object) -> dict:
         return {"statusCode": 200}
 
-    wrapped = wshtlib.lambda_handler(handler)
+    wrapped = wshtlib.bootstrap(handler)
     assert callable(wrapped)
 
 
-def test_lambda_handler_warming_returns_200() -> None:
+def test_bootstrap_warming_returns_200() -> None:
     """README: warming events return 200 early."""
     import wshtlib
 
-    @wshtlib.lambda_handler
+    @wshtlib.bootstrap
     def handler(event: dict, context: object) -> dict:
         return {"statusCode": 200}
 
@@ -30,11 +29,11 @@ def test_lambda_handler_warming_returns_200() -> None:
     assert result == {"statusCode": 200}
 
 
-def test_lambda_handler_unhandled_exception_returns_500() -> None:
+def test_bootstrap_unhandled_exception_returns_500() -> None:
     """README: unhandled exceptions return 500."""
     import wshtlib
 
-    @wshtlib.lambda_handler
+    @wshtlib.bootstrap
     def handler(event: dict, context: object) -> dict:
         raise RuntimeError("boom")
 
@@ -59,7 +58,6 @@ def test_metrics_count_put_flush_via_metrics_context() -> None:
     m.put("Duration", 142.5, unit="Milliseconds")
     out = io.StringIO()
     result = m.flush(output=out)
-    assert result is not None
     assert "OrderPlaced" in result
     assert "Duration" in result
 
@@ -99,9 +97,10 @@ def test_set_user_id_reflected_in_get_context() -> None:
     assert get_context()["user_id"] == "u_123"
 
 
-def test_require_env_raises_runtime_error_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_require_env_raises_runtime_error_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """README: require_env raises RuntimeError if missing/empty."""
-    import os
 
     from wshtlib import require_env
 
@@ -136,7 +135,6 @@ def test_readme_metrics_import_is_runnable() -> None:
 
 def test_metrics_namespace_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     """README: METRICS_NAMESPACE env var sets CloudWatch namespace."""
-    import importlib
 
     import wshtlib.metrics as m_mod
 
@@ -145,7 +143,9 @@ def test_metrics_namespace_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     assert m_mod._NAMESPACE == "Wholeshoot" or isinstance(m_mod._NAMESPACE, str)
 
 
-def test_environment_env_var_added_as_dimension(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_env_var_added_as_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """README: ENVIRONMENT env var is added as a metrics dimension if set."""
     import json
 
@@ -160,7 +160,9 @@ def test_environment_env_var_added_as_dimension(monkeypatch: pytest.MonkeyPatch)
     assert emf.get("environment") == "prod"
 
 
-def test_log_level_env_var_applied_to_new_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_log_level_env_var_applied_to_new_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """README: LOG_LEVEL env var is applied when creating a new logger."""
     import logging
 
