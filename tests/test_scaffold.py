@@ -1,8 +1,8 @@
 """Tests for the package scaffold: pyproject.toml, __init__.py, LICENSE, CHANGELOG, .gitignore."""
 
+import tomllib
 from pathlib import Path
 
-import tomllib
 import pytest
 
 ROOT = Path(__file__).parent.parent
@@ -11,7 +11,7 @@ ROOT = Path(__file__).parent.parent
 # --- pyproject.toml ---
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def pyproject() -> dict:
     with open(ROOT / "pyproject.toml", "rb") as f:
         return tomllib.load(f)
@@ -76,36 +76,65 @@ def test_coverage_fail_under(pyproject: dict) -> None:
 
 def test_dev_group_has_required_packages(pyproject: dict) -> None:
     dev_deps = pyproject["dependency-groups"]["dev"]
-    required = {"pytest", "pytest-cov", "pytest-asyncio", "black", "ruff", "mypy", "httpx"}
+    required = {
+        "pytest",
+        "pytest-cov",
+        "pytest-asyncio",
+        "black",
+        "ruff",
+        "mypy",
+        "httpx",
+    }
     dep_names = {d.split(">=")[0].split("==")[0].strip() for d in dev_deps}
     assert required.issubset(dep_names)
 
 
 # --- __init__.py (source inspection) ---
 
-INIT_TEXT = (ROOT / "wshtlib" / "__init__.py").read_text()
+
+@pytest.fixture()
+def init_text() -> str:
+    """Return the content of wshtlib/__init__.py.
+
+    Returns a fresh read of the file for each test.
+    """
+    return (ROOT / "wshtlib" / "__init__.py").read_text()
 
 
-def test_version_declared() -> None:
-    assert '__version__ = "0.1.0"' in INIT_TEXT
+def test_version_declared(init_text: str) -> None:
+    assert '__version__ = "0.1.0"' in init_text
 
 
-def test_init_exports_context_symbols() -> None:
-    for sym in ("clear_context", "get_context", "init_context", "init_context_from_request", "set_user_id"):
-        assert sym in INIT_TEXT
+def test_init_exports_context_symbols(init_text: str) -> None:
+    for sym in (
+        "clear_context",
+        "get_context",
+        "init_context",
+        "init_context_from_request",
+        "set_user_id",
+    ):
+        assert sym in init_text
 
 
-def test_init_exports_core_symbols() -> None:
-    for sym in ("lambda_handler", "require_env", "require_https_url", "get_logger", "set_lambda_context", "MetricsContext", "metrics"):
-        assert sym in INIT_TEXT
+def test_init_exports_core_symbols(init_text: str) -> None:
+    for sym in (
+        "lambda_handler",
+        "require_env",
+        "require_https_url",
+        "get_logger",
+        "set_lambda_context",
+        "MetricsContext",
+        "metrics",
+    ):
+        assert sym in init_text
 
 
-def test_init_does_not_export_middleware() -> None:
-    assert "WshtlibMiddleware" not in INIT_TEXT
+def test_init_does_not_export_middleware(init_text: str) -> None:
+    assert "WshtlibMiddleware" not in init_text
 
 
-def test_init_all_list_present() -> None:
-    assert "__all__" in INIT_TEXT
+def test_init_all_list_present(init_text: str) -> None:
+    assert "__all__" in init_text
 
 
 # --- LICENSE ---
@@ -116,7 +145,10 @@ def test_license_file_exists() -> None:
 
 
 def test_license_is_mit() -> None:
-    text = (ROOT / "LICENSE").read_text()
+    try:
+        text = (ROOT / "LICENSE").read_text()
+    except OSError as exc:
+        pytest.fail(f"Could not read LICENSE file: {exc}")
     assert "MIT License" in text
     assert "Wholeshoot" in text
 
@@ -129,7 +161,10 @@ def test_changelog_exists() -> None:
 
 
 def test_changelog_has_v010_entry() -> None:
-    text = (ROOT / "CHANGELOG.md").read_text()
+    try:
+        text = (ROOT / "CHANGELOG.md").read_text()
+    except OSError as exc:
+        pytest.fail(f"Could not read CHANGELOG.md: {exc}")
     assert "0.1.0" in text
     assert "Initial release" in text
 
