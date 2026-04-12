@@ -24,6 +24,7 @@ dev = [
   "mypy",
   "starlette>=0.27",
   "httpx",
+  "boto3-stubs[secretsmanager]",
 ]
 
 [build-system]
