@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.1] - 2026-04-12
+
+### Fixed
+- Add `readme` field to `pyproject.toml` so PyPI renders the project description
+
 ## [0.1.0] - 2026-04-12
 
 Initial release.
