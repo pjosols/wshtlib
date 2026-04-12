@@ -1,4 +1,4 @@
-"""Tests for wshtlib/metrics.py — CloudWatch Embedded Metrics Format output"""
+"""Test MetricsContext and EMF output."""
 
 import io
 import json
@@ -172,3 +172,23 @@ def test_multiple_metrics_in_single_flush():
     assert "Errors" in names
     assert data["Latency"] == 50.0
     assert data["Errors"] == 1.0
+
+
+# --- package-level import shadowing ---
+
+
+def test_wshtlib_metrics_attribute_is_module():
+    """wshtlib.metrics must resolve to the submodule, not the MetricsContext instance."""
+    import types
+
+    import wshtlib
+    import wshtlib.metrics
+
+    assert isinstance(wshtlib.metrics, types.ModuleType)
+
+
+def test_wshtlib_default_metrics_is_metrics_context_instance():
+    """wshtlib.default_metrics must be a MetricsContext instance."""
+    import wshtlib
+
+    assert isinstance(wshtlib.default_metrics, MetricsContext)

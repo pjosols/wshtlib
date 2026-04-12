@@ -1,4 +1,4 @@
-"""wshtlib — shared runtime library for Wholeshoot services."""
+"""Shared runtime library for Wholeshoot services."""
 
 __version__ = "0.1.0"
 
@@ -13,7 +13,8 @@ from wshtlib.decorators import lambda_handler
 from wshtlib.env import require_env
 from wshtlib.http import require_https_url
 from wshtlib.logger import get_logger, set_lambda_context
-from wshtlib.metrics import MetricsContext, metrics
+from wshtlib.metrics import MetricsContext
+from wshtlib.metrics import metrics as default_metrics
 
 __all__ = [
     "clear_context",
@@ -27,5 +28,5 @@ __all__ = [
     "get_logger",
     "set_lambda_context",
     "MetricsContext",
-    "metrics",
+    "default_metrics",
 ]
