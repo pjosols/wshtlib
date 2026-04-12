@@ -4,14 +4,15 @@
 
 ### Added
 - `require_secret()` for AWS Secrets Manager integration with caching and error handling
-- Test module docstrings: concise, imperative descriptions for `test_context.py`, `test_decorators.py`, `test_metrics.py`, `test_middleware.py`, `test_secrets.py`
+- Test module docstrings: concise, imperative descriptions for `test_logger.py`, `test_metrics.py`, `test_middleware.py`, `test_readme.py`, `test_scaffold.py`, `test_secrets.py`
 
 ### Docs
 - Updated `__init__.py` module docstring for clarity
+- Refined module docstrings in `wshtlib.metrics` and `wshtlib.middleware` to be concise and imperative
 
 ## [0.1.0] - 2026-04-12
 
-Initial release. Extracted from wholeshoot2.
+Initial release.
 
 ### Added
 - `MetricsContext` for CloudWatch Embedded Metrics Format (EMF) output

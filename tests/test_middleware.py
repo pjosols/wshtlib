@@ -36,7 +36,7 @@ def _make_app() -> Starlette:
 
 
 def _capture_log_entry(fn: Callable[[], None]) -> dict[str, object]:
-    """Run fn() and return the last JSON log entry emitted by wshtlib.middleware logger."""
+    """Run fn() and return the last JSON log entry from wshtlib.middleware logger."""
     buf = io.StringIO()
     mw_logger = logging.getLogger("wshtlib.middleware")
     # Reuse the existing formatter so output is JSON, not bare message strings
@@ -49,7 +49,7 @@ def _capture_log_entry(fn: Callable[[], None]) -> dict[str, object]:
         fn()
     finally:
         mw_logger.removeHandler(handler)
-    lines = [l for l in buf.getvalue().strip().splitlines() if l]
+    lines = [line for line in buf.getvalue().strip().splitlines() if line]
     return json.loads(lines[-1])
 
 

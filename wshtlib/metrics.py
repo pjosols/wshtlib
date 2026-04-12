@@ -1,4 +1,4 @@
-"""Wholeshoot wshtlib - CloudWatch Embedded Metrics Format (EMF) output"""
+"""Emit CloudWatch Embedded Metrics Format (EMF) JSON to stdout."""
 
 import json
 import os

@@ -1,4 +1,4 @@
-"""Tests for the package scaffold: pyproject.toml, __init__.py, LICENSE, CHANGELOG, .gitignore."""
+"""Tests for package scaffold: pyproject.toml, __init__.py, LICENSE, CHANGELOG."""
 
 import tomllib
 from pathlib import Path

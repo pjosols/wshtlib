@@ -1,4 +1,4 @@
-"""Wholeshoot wshtlib - FastAPI request context and logging middleware"""
+"""Initialise request context and log HTTP requests in FastAPI/Starlette."""
 
 import time
 from typing import Any, Awaitable, Callable

@@ -63,7 +63,7 @@ def test_metrics_count_put_flush_via_metrics_context() -> None:
 
 
 def test_metrics_module_instance_importable_from_metrics_submodule() -> None:
-    """README: from wshtlib.metrics import metrics — the instance is on the submodule."""
+    """README: from wshtlib.metrics import metrics — instance is on the submodule."""
     from wshtlib.metrics import MetricsContext
     from wshtlib.metrics import metrics as m
 

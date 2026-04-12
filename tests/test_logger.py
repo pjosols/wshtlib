@@ -1,4 +1,4 @@
-"""Test structured JSON logger output, Lambda context enrichment, and runtime detection."""
+"""Tests for structured JSON logger, Lambda enrichment, and runtime detection."""
 
 import json
 import logging

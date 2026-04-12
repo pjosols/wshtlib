@@ -175,7 +175,7 @@ def test_multiple_metrics_in_single_flush() -> None:
 
 
 def test_wshtlib_metrics_attribute_is_module() -> None:
-    """wshtlib.metrics must resolve to the submodule, not the MetricsContext instance."""
+    """wshtlib.metrics must resolve to the submodule, not the MetricsContext class."""
     import types
 
     import wshtlib

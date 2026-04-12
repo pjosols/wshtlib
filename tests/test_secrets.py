@@ -2,8 +2,9 @@
 
 import sys
 import types
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 import wshtlib.secrets as secrets_mod
 from wshtlib.secrets import require_secret
@@ -13,7 +14,9 @@ def setup_function() -> None:
     secrets_mod._cache.clear()
 
 
-def _boto3_mocks(secret_value: dict | None = None, raise_client_error: bool = False) -> tuple:
+def _boto3_mocks(
+    secret_value: dict | None = None, raise_client_error: bool = False
+) -> tuple:
     """Return (sys_modules_patch, mock_client) with boto3 and botocore faked."""
     # Minimal botocore.exceptions mock
     botocore_mod = types.ModuleType("botocore")
@@ -94,5 +97,6 @@ def test_raises_runtime_error_when_secret_string_missing() -> None:
 
 def test_exported_from_package() -> None:
     import wshtlib
+
     assert wshtlib.require_secret is require_secret
     assert "require_secret" in wshtlib.__all__
