@@ -22,7 +22,8 @@ def test_project_name(pyproject: dict) -> None:
 
 
 def test_project_version(pyproject: dict) -> None:
-    assert pyproject["project"]["version"] == "0.1.0"
+    import wshtlib
+    assert pyproject["project"]["version"] == wshtlib.__version__
 
 
 def test_requires_python(pyproject: dict) -> None:
@@ -101,8 +102,9 @@ def init_text() -> str:
     return (ROOT / "wshtlib" / "__init__.py").read_text()
 
 
-def test_version_declared(init_text: str) -> None:
-    assert '__version__ = "0.1.0"' in init_text
+def test_version_declared(init_text: str, pyproject: dict) -> None:
+    version = pyproject["project"]["version"]
+    assert f'__version__ = "{version}"' in init_text
 
 
 def test_init_exports_context_symbols(init_text: str) -> None:
