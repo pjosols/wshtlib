@@ -326,3 +326,21 @@ class TestTraceIdInjection:
         init_context({}, MagicMock(aws_request_id="req-2"))
         entry = self._emit()
         assert "trace_id" not in entry
+
+    def test_trace_id_absent_on_import_error(self, monkeypatch):
+        """ImportError from lazy import returns None, not a crash."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "wshtlib.context", None)
+        entry = self._emit()
+        assert "trace_id" not in entry
+
+    def test_trace_id_absent_on_attribute_error(self, monkeypatch):
+        """AttributeError (e.g. get_context missing) returns None, not a crash."""
+        import types
+
+        fake_mod = types.ModuleType("wshtlib.context")
+        # no get_context attribute
+        monkeypatch.setitem(__import__("sys").modules, "wshtlib.context", fake_mod)
+        entry = self._emit()
+        assert "trace_id" not in entry
