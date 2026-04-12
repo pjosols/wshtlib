@@ -21,11 +21,11 @@ pip install wshtlib[fastapi]
 ### Lambda handler
 
 ```python
-from wshtlib import lambda_handler, get_logger
+from wshtlib import bootstrap, get_logger
 
 logger = get_logger("my-service")
 
-@lambda_handler
+@bootstrap
 def handler(event, context):
     logger.info("invoked", path=event.get("path"))
     return {"statusCode": 200}
