@@ -1,4 +1,4 @@
-"""Wholeshoot shared structured JSON logger"""
+"""Emit structured JSON logs to stdout with runtime and Lambda context enrichment."""
 
 import json
 import logging
@@ -44,12 +44,10 @@ class _JsonFormatter(logging.Formatter):
     def _get_trace_id(self) -> Optional[str]:
         try:
             # Lazy import avoids circular dependency with wshtlib.context.
-            # Broad except is intentional: trace injection is best-effort and
-            # must never crash the formatter regardless of import or runtime errors.
             from wshtlib.context import get_context
 
             return get_context().get("trace_id")
-        except Exception:  # noqa: BLE001
+        except (ImportError, AttributeError):
             return None
 
     def format(self, record: logging.LogRecord) -> str:
