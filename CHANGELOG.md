@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Docs
+- Test module docstrings: concise, imperative descriptions for `test_context.py`, `test_decorators.py`, `test_metrics.py`, `test_middleware.py`
+
 ## [0.1.0] - 2026-04-12
 
 Initial release. Extracted from wholeshoot2.

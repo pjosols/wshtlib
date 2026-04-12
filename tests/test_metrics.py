@@ -1,4 +1,4 @@
-"""Test MetricsContext and EMF output."""
+"""Test CloudWatch Embedded Metrics Format output."""
 
 import io
 import json
@@ -7,17 +7,14 @@ from wshtlib.context import clear_context
 from wshtlib.metrics import _NAMESPACE, MetricsContext
 
 
-def setup_function():
+def setup_function() -> None:
     clear_context()
-    import wshtlib.context as wc
-
-    wc.clear_context()
 
 
 # --- put ---
 
 
-def test_put_records_metric():
+def test_put_records_metric() -> None:
     m = MetricsContext()
     m.put("Latency", 42.0, "Milliseconds")
     out = io.StringIO()
@@ -28,7 +25,7 @@ def test_put_records_metric():
     assert data["Latency"] == 42.0
 
 
-def test_put_invalid_unit_raises():
+def test_put_invalid_unit_raises() -> None:
     m = MetricsContext()
     try:
         m.put("X", 1.0, "Bananas")
@@ -40,7 +37,7 @@ def test_put_invalid_unit_raises():
 # --- count ---
 
 
-def test_count_uses_count_unit():
+def test_count_uses_count_unit() -> None:
     m = MetricsContext()
     m.count("Errors")
     out = io.StringIO()
@@ -52,7 +49,7 @@ def test_count_uses_count_unit():
     assert data["Errors"] == 1.0
 
 
-def test_count_custom_value():
+def test_count_custom_value() -> None:
     m = MetricsContext()
     m.count("Uploads", 5.0)
     out = io.StringIO()
@@ -64,12 +61,12 @@ def test_count_custom_value():
 # --- flush ---
 
 
-def test_flush_returns_none_when_empty():
+def test_flush_returns_none_when_empty() -> None:
     m = MetricsContext()
     assert m.flush() is None
 
 
-def test_flush_writes_to_stdout_by_default(capsys):
+def test_flush_writes_to_stdout_by_default(capsys) -> None:
     m = MetricsContext()
     m.count("Hits")
     m.flush()
@@ -78,7 +75,7 @@ def test_flush_writes_to_stdout_by_default(capsys):
     assert data["Hits"] == 1.0
 
 
-def test_flush_clears_metrics():
+def test_flush_clears_metrics() -> None:
     m = MetricsContext()
     m.count("X")
     out = io.StringIO()
@@ -86,7 +83,7 @@ def test_flush_clears_metrics():
     assert m.flush(out) is None  # nothing left
 
 
-def test_flush_emf_structure():
+def test_flush_emf_structure() -> None:
     m = MetricsContext()
     m.put("Duration", 100.0, "Milliseconds")
     out = io.StringIO()
@@ -101,7 +98,7 @@ def test_flush_emf_structure():
     assert "Metrics" in cw
 
 
-def test_flush_namespace_from_env(monkeypatch):
+def test_flush_namespace_from_env(monkeypatch) -> None:
     import wshtlib.metrics as metrics_mod
 
     monkeypatch.setattr(metrics_mod, "_NAMESPACE", "MyApp")
@@ -116,7 +113,7 @@ def test_flush_namespace_from_env(monkeypatch):
 # --- dimensions from context ---
 
 
-def test_flush_includes_service_dimension_from_context():
+def test_flush_includes_service_dimension_from_context() -> None:
     import wshtlib.context as wc
 
     wc._ctx.set(
@@ -133,7 +130,7 @@ def test_flush_includes_service_dimension_from_context():
     assert "service" in dim_keys
 
 
-def test_flush_includes_environment_dimension(monkeypatch):
+def test_flush_includes_environment_dimension(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "prod")
     m = MetricsContext()
     m.count("X")
@@ -145,7 +142,7 @@ def test_flush_includes_environment_dimension(monkeypatch):
     assert "environment" in dim_keys
 
 
-def test_flush_empty_dimensions_when_no_context(monkeypatch):
+def test_flush_empty_dimensions_when_no_context(monkeypatch) -> None:
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     clear_context()
     m = MetricsContext()
@@ -160,7 +157,7 @@ def test_flush_empty_dimensions_when_no_context(monkeypatch):
 # --- multiple metrics ---
 
 
-def test_multiple_metrics_in_single_flush():
+def test_multiple_metrics_in_single_flush() -> None:
     m = MetricsContext()
     m.put("Latency", 50.0, "Milliseconds")
     m.count("Errors")
@@ -177,7 +174,7 @@ def test_multiple_metrics_in_single_flush():
 # --- package-level import shadowing ---
 
 
-def test_wshtlib_metrics_attribute_is_module():
+def test_wshtlib_metrics_attribute_is_module() -> None:
     """wshtlib.metrics must resolve to the submodule, not the MetricsContext instance."""
     import types
 
@@ -187,7 +184,7 @@ def test_wshtlib_metrics_attribute_is_module():
     assert isinstance(wshtlib.metrics, types.ModuleType)
 
 
-def test_wshtlib_default_metrics_is_metrics_context_instance():
+def test_wshtlib_default_metrics_is_metrics_context_instance() -> None:
     """wshtlib.default_metrics must be a MetricsContext instance."""
     import wshtlib
 

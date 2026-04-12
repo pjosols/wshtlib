@@ -1,8 +1,9 @@
-"""Tests for wshtlib/middleware.py — FastAPI request context and logging middleware"""
+"""Test FastAPI request context and logging middleware."""
 
 import io
 import json
 import logging
+from collections.abc import Callable, Generator
 
 import pytest
 from starlette.applications import Starlette
@@ -16,7 +17,7 @@ from wshtlib.middleware import WshtlibMiddleware
 
 
 @pytest.fixture(autouse=True)
-def reset_context():
+def reset_context() -> Generator[None, None, None]:
     clear_context()
     yield
     clear_context()
@@ -34,7 +35,7 @@ def _make_app() -> Starlette:
     return app
 
 
-def _capture_log_entry(fn) -> dict:
+def _capture_log_entry(fn: Callable[[], None]) -> dict[str, object]:
     """Run fn() and return the last JSON log entry emitted by wshtlib.middleware logger."""
     buf = io.StringIO()
     mw_logger = logging.getLogger("wshtlib.middleware")
@@ -55,14 +56,14 @@ def _capture_log_entry(fn) -> dict:
 # --- X-Trace-Id header injection ---
 
 
-def test_trace_id_injected_into_response_header():
+def test_trace_id_injected_into_response_header() -> None:
     client = TestClient(_make_app())
     resp = client.get("/ping", headers={"x-amzn-trace-id": "Root=1-abc"})
     assert resp.status_code == 200
     assert resp.headers["x-trace-id"] == "Root=1-abc"
 
 
-def test_no_trace_id_header_when_not_in_request():
+def test_no_trace_id_header_when_not_in_request() -> None:
     client = TestClient(_make_app())
     resp = client.get("/ping")
     assert resp.status_code == 200
@@ -72,7 +73,7 @@ def test_no_trace_id_header_when_not_in_request():
 # --- context is initialised per request ---
 
 
-def test_context_populated_during_request():
+def test_context_populated_during_request() -> None:
     """Context is set inside the request thread — verify via response body."""
 
     async def ctx_endpoint(request: Request) -> JSONResponse:
@@ -95,7 +96,7 @@ def test_context_populated_during_request():
 # --- request logging ---
 
 
-def test_request_is_logged():
+def test_request_is_logged() -> None:
     client = TestClient(_make_app())
     entry = _capture_log_entry(lambda: client.get("/ping"))
     assert entry["message"] == "request"
@@ -105,13 +106,13 @@ def test_request_is_logged():
     assert isinstance(entry["duration_ms"], int)
 
 
-def test_log_includes_correct_status_code():
+def test_log_includes_correct_status_code() -> None:
     client = TestClient(_make_app())
     entry = _capture_log_entry(lambda: client.get("/status"))
     assert entry["status"] == 200
 
 
-def test_log_includes_correct_method():
+def test_log_includes_correct_method() -> None:
     async def create(request: Request) -> JSONResponse:
         return JSONResponse({})
 
@@ -126,7 +127,7 @@ def test_log_includes_correct_method():
 # --- response body is preserved ---
 
 
-def test_response_body_unchanged():
+def test_response_body_unchanged() -> None:
     client = TestClient(_make_app())
     resp = client.get("/ping")
     assert resp.json() == {"ok": True}
@@ -135,7 +136,7 @@ def test_response_body_unchanged():
 # --- WshtlibMiddleware is importable ---
 
 
-def test_middleware_class_exists():
+def test_middleware_class_exists() -> None:
     from wshtlib.middleware import WshtlibMiddleware as MW
 
     assert MW is not None

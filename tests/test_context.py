@@ -1,4 +1,4 @@
-"""Tests for wshtlib/context.py — request-scoped context store"""
+"""Test request-scoped context store."""
 
 from unittest.mock import MagicMock
 
@@ -11,14 +11,14 @@ from wshtlib.context import (
 )
 
 
-def setup_function():
+def setup_function() -> None:
     clear_context()
 
 
 # --- init_context ---
 
 
-def test_init_context_trace_id_from_header():
+def test_init_context_trace_id_from_header() -> None:
     event = {"headers": {"x-amzn-trace-id": "Root=1-abc"}}
     lctx = MagicMock(aws_request_id="req-123")
     init_context(event, lctx)
@@ -28,7 +28,7 @@ def test_init_context_trace_id_from_header():
     assert c["user_id"] is None
 
 
-def test_init_context_trace_id_from_request_context():
+def test_init_context_trace_id_from_request_context() -> None:
     event = {"requestContext": {"requestId": "apigw-req-id"}}
     lctx = MagicMock(aws_request_id="req-456")
     init_context(event, lctx)
@@ -36,7 +36,7 @@ def test_init_context_trace_id_from_request_context():
     assert c["trace_id"] == "apigw-req-id"
 
 
-def test_init_context_header_takes_precedence_over_request_context():
+def test_init_context_header_takes_precedence_over_request_context() -> None:
     event = {
         "headers": {"x-amzn-trace-id": "Root=1-header"},
         "requestContext": {"requestId": "apigw-id"},
@@ -46,18 +46,18 @@ def test_init_context_header_takes_precedence_over_request_context():
     assert get_context()["trace_id"] == "Root=1-header"
 
 
-def test_init_context_no_trace_id():
+def test_init_context_no_trace_id() -> None:
     init_context({}, MagicMock(aws_request_id="req-000"))
     assert get_context()["trace_id"] is None
 
 
-def test_init_context_null_headers():
+def test_init_context_null_headers() -> None:
     event = {"headers": None}
     init_context(event, MagicMock(aws_request_id="req-null"))
     assert get_context()["trace_id"] is None
 
 
-def test_init_context_no_aws_request_id():
+def test_init_context_no_aws_request_id() -> None:
     lctx = object()  # no aws_request_id attribute
     init_context({}, lctx)
     assert get_context()["correlation_id"] is None
@@ -73,7 +73,7 @@ def _make_request(headers: dict, path: str = "/test") -> MagicMock:
     return req
 
 
-def test_init_context_from_request_trace_id():
+def test_init_context_from_request_trace_id() -> None:
     req = _make_request({"x-amzn-trace-id": "Root=1-req", "x-correlation-id": "corr-1"})
     init_context_from_request(req)
     c = get_context()
@@ -82,13 +82,13 @@ def test_init_context_from_request_trace_id():
     assert c["user_id"] is None
 
 
-def test_init_context_from_request_correlation_id_fallback_to_path():
+def test_init_context_from_request_correlation_id_fallback_to_path() -> None:
     req = _make_request({"x-amzn-trace-id": "Root=1-x"}, path="/shoots/abc")
     init_context_from_request(req)
     assert get_context()["correlation_id"] == "/shoots/abc"
 
 
-def test_init_context_from_request_no_trace_id():
+def test_init_context_from_request_no_trace_id() -> None:
     req = _make_request({})
     init_context_from_request(req)
     assert get_context()["trace_id"] is None
@@ -97,7 +97,7 @@ def test_init_context_from_request_no_trace_id():
 # --- get_context returns a copy ---
 
 
-def test_get_context_returns_copy():
+def test_get_context_returns_copy() -> None:
     init_context({}, MagicMock(aws_request_id="r"))
     c1 = get_context()
     c1["injected"] = True
@@ -107,20 +107,20 @@ def test_get_context_returns_copy():
 # --- set_user_id ---
 
 
-def test_set_user_id():
+def test_set_user_id() -> None:
     init_context({}, MagicMock(aws_request_id="r"))
     set_user_id("user-sub-abc")
     assert get_context()["user_id"] == "user-sub-abc"
 
 
-def test_set_user_id_none():
+def test_set_user_id_none() -> None:
     init_context({}, MagicMock(aws_request_id="r"))
     set_user_id("user-sub-abc")
     set_user_id(None)
     assert get_context()["user_id"] is None
 
 
-def test_set_user_id_preserves_other_fields():
+def test_set_user_id_preserves_other_fields() -> None:
     init_context(
         {"headers": {"x-amzn-trace-id": "Root=1-keep"}},
         MagicMock(aws_request_id="r"),
@@ -134,7 +134,7 @@ def test_set_user_id_preserves_other_fields():
 # --- clear_context ---
 
 
-def test_clear_context():
+def test_clear_context() -> None:
     init_context({}, MagicMock(aws_request_id="r"))
     clear_context()
     assert get_context() == {}
@@ -143,7 +143,7 @@ def test_clear_context():
 # --- context isolation between coroutines ---
 
 
-def test_context_isolation_between_tasks():
+def test_context_isolation_between_tasks() -> None:
     """Each asyncio task gets its own context copy via contextvars."""
     import asyncio
 

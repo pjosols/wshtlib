@@ -1,4 +1,4 @@
-"""Validate wshtlib.decorators.lambda_handler decorator behavior."""
+"""Test Lambda handler decorator."""
 
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +9,7 @@ from wshtlib.decorators import bootstrap
 
 
 @pytest.fixture(autouse=True)
-def reset_context():
+def reset_context() -> None:
     clear_context()
     yield
     clear_context()
@@ -24,7 +24,7 @@ def _make_lambda_context(request_id: str = "req-test") -> MagicMock:
 # --- warming events ---
 
 
-def test_warming_event_returns_200():
+def test_warming_event_returns_200() -> None:
     @bootstrap
     def handler(event, context):
         raise AssertionError("should not be called")
@@ -33,7 +33,7 @@ def test_warming_event_returns_200():
     assert result == {"statusCode": 200}
 
 
-def test_warming_event_skips_context_init():
+def test_warming_event_skips_context_init() -> None:
     @bootstrap
     def handler(event, context):
         pass  # pragma: no cover
@@ -42,7 +42,7 @@ def test_warming_event_skips_context_init():
     assert get_context() == {}
 
 
-def test_non_warming_source_does_not_short_circuit():
+def test_non_warming_source_does_not_short_circuit() -> None:
     called = []
 
     @bootstrap
@@ -57,7 +57,7 @@ def test_non_warming_source_does_not_short_circuit():
 # --- context initialisation ---
 
 
-def test_init_context_called_before_handler():
+def test_init_context_called_before_handler() -> None:
     captured = {}
 
     @bootstrap
@@ -71,7 +71,7 @@ def test_init_context_called_before_handler():
     assert captured["correlation_id"] == "req-ctx"
 
 
-def test_set_lambda_context_called():
+def test_set_lambda_context_called() -> None:
     with patch("wshtlib.decorators.set_lambda_context") as mock_set:
 
         @bootstrap
@@ -86,7 +86,7 @@ def test_set_lambda_context_called():
 # --- error handling ---
 
 
-def test_unhandled_exception_returns_500():
+def test_unhandled_exception_returns_500() -> None:
     @bootstrap
     def handler(event, context):
         raise ValueError("boom")
@@ -95,7 +95,7 @@ def test_unhandled_exception_returns_500():
     assert result == {"statusCode": 500}
 
 
-def test_unhandled_exception_logs_error():
+def test_unhandled_exception_logs_error() -> None:
     with patch("wshtlib.decorators.logger") as mock_logger:
 
         @bootstrap
@@ -108,7 +108,7 @@ def test_unhandled_exception_logs_error():
         assert call_args[1] == "handler"
 
 
-def test_successful_return_value_passed_through():
+def test_successful_return_value_passed_through() -> None:
     @bootstrap
     def handler(event, context):
         return {"statusCode": 201, "body": "ok"}
@@ -120,7 +120,7 @@ def test_successful_return_value_passed_through():
 # --- functools.wraps ---
 
 
-def test_decorator_preserves_function_name():
+def test_decorator_preserves_function_name() -> None:
     @bootstrap
     def my_special_handler(event, context):
         return {}
@@ -128,7 +128,7 @@ def test_decorator_preserves_function_name():
     assert my_special_handler.__name__ == "my_special_handler"
 
 
-def test_decorator_preserves_docstring():
+def test_decorator_preserves_docstring() -> None:
     @bootstrap
     def handler(event, context):
         """My handler docstring."""
@@ -140,26 +140,26 @@ def test_decorator_preserves_docstring():
 # --- public API ---
 
 
-def test_bootstrap_exported_from_wshtlib():
+def test_bootstrap_exported_from_wshtlib() -> None:
     import wshtlib
 
     assert hasattr(wshtlib, "bootstrap")
     assert callable(wshtlib.bootstrap)
 
 
-def test_lambda_handler_not_exported_from_wshtlib():
+def test_lambda_handler_not_exported_from_wshtlib() -> None:
     import wshtlib
 
     assert not hasattr(wshtlib, "lambda_handler")
 
 
-def test_bootstrap_in_all():
+def test_bootstrap_in_all() -> None:
     import wshtlib
 
     assert "bootstrap" in wshtlib.__all__
 
 
-def test_lambda_handler_not_in_all():
+def test_lambda_handler_not_in_all() -> None:
     import wshtlib
 
     assert "lambda_handler" not in wshtlib.__all__
