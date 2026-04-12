@@ -1,4 +1,7 @@
-"""Test require_secret with mocked boto3 and Secrets Manager."""
+"""Test require_secret with mocked boto3 and Secrets Manager.
+
+Tests verify secret retrieval, caching, error handling, and security (no secret names in error messages).
+"""
 
 import sys
 import types
@@ -17,7 +20,12 @@ def setup_function() -> None:
 def _boto3_mocks(
     secret_value: dict | None = None, raise_client_error: bool = False
 ) -> tuple:
-    """Return (sys_modules_patch, mock_client) with boto3 and botocore faked."""
+    """Create fake boto3 and botocore modules for testing.
+
+    secret_value: Response dict to return from get_secret_value, or None for empty dict.
+    raise_client_error: If True, get_secret_value raises ClientError with ResourceNotFoundException.
+    Returns tuple of (modules_dict, mock_client) where modules_dict maps module names to fake modules.
+    """
     # Minimal botocore.exceptions mock
     botocore_mod = types.ModuleType("botocore")
     botocore_exc_mod = types.ModuleType("botocore.exceptions")
@@ -73,7 +81,7 @@ def test_raises_runtime_error_on_client_error() -> None:
     with pytest.MonkeyPatch().context() as mp:
         for k, v in mods.items():
             mp.setitem(sys.modules, k, v)
-        with pytest.raises(RuntimeError, match="Secret not available: my/secret"):
+        with pytest.raises(RuntimeError, match="Secret not available"):
             require_secret("my/secret")
 
 
@@ -82,7 +90,7 @@ def test_raises_runtime_error_when_secret_string_empty() -> None:
     with pytest.MonkeyPatch().context() as mp:
         for k, v in mods.items():
             mp.setitem(sys.modules, k, v)
-        with pytest.raises(RuntimeError, match="Secret is empty: my/secret"):
+        with pytest.raises(RuntimeError, match="Secret is empty"):
             require_secret("my/secret")
 
 
@@ -91,8 +99,28 @@ def test_raises_runtime_error_when_secret_string_missing() -> None:
     with pytest.MonkeyPatch().context() as mp:
         for k, v in mods.items():
             mp.setitem(sys.modules, k, v)
-        with pytest.raises(RuntimeError, match="Secret is empty: my/secret"):
+        with pytest.raises(RuntimeError, match="Secret is empty"):
             require_secret("my/secret")
+
+
+def test_client_error_message_does_not_include_secret_name() -> None:
+    mods, _ = _boto3_mocks(raise_client_error=True)
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError) as exc_info:
+            require_secret("sensitive/secret-name")
+    assert "sensitive/secret-name" not in str(exc_info.value)
+
+
+def test_empty_secret_message_does_not_include_secret_name() -> None:
+    mods, _ = _boto3_mocks({"SecretString": ""})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError) as exc_info:
+            require_secret("sensitive/secret-name")
+    assert "sensitive/secret-name" not in str(exc_info.value)
 
 
 def test_exported_from_package() -> None:
