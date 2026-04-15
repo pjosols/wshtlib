@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.2] - 2026-04-15
+
+### Changed
+- `WshtlibMiddleware` is now importable directly from `wshtlib` top-level package, with graceful fallback when FastAPI is not installed
+
 ## [0.1.1] - 2026-04-12
 
 ### Fixed
