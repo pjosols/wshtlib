@@ -133,24 +133,19 @@ def test_init_exports_core_symbols(init_text: str) -> None:
 
 def test_init_middleware_import_is_optional() -> None:
     """Importing wshtlib must not raise even when FastAPI is absent."""
-    import importlib
     import sys
 
-    # Remove cached modules so the import is re-evaluated
-    for key in list(sys.modules):
-        if key.startswith("wshtlib"):
-            del sys.modules[key]
-
-    # Simulate missing FastAPI by temporarily hiding the middleware module
+    saved = {k: v for k, v in sys.modules.items() if k.startswith("wshtlib")}
+    for key in saved:
+        del sys.modules[key]
     sys.modules["wshtlib.middleware"] = None  # type: ignore[assignment]
     try:
         import wshtlib  # noqa: F401
     finally:
-        del sys.modules["wshtlib.middleware"]
         for key in list(sys.modules):
             if key.startswith("wshtlib"):
                 del sys.modules[key]
-        importlib.import_module("wshtlib")
+        sys.modules.update(saved)
 
 
 def test_init_all_list_present(init_text: str) -> None:
