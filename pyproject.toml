@@ -1,6 +1,6 @@
 [project]
 name = "wshtlib"
-version = "0.1.1"
+version = "0.1.2"
 description = "Shared runtime library for Wholeshoot services"
 readme = "README.md"
 authors = [{ name = "Wholeshoot" }]

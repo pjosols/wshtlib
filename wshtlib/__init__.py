@@ -17,11 +17,6 @@ from wshtlib.metrics import MetricsContext
 from wshtlib.metrics import metrics as default_metrics
 from wshtlib.secrets import require_secret
 
-try:
-    from wshtlib.middleware import WshtlibMiddleware
-except ImportError:
-    pass
-
 __all__ = [
     "clear_context",
     "get_context",
@@ -36,5 +31,11 @@ __all__ = [
     "MetricsContext",
     "default_metrics",
     "require_secret",
-    "WshtlibMiddleware",
 ]
+
+try:
+    from wshtlib.middleware import WshtlibMiddleware
+
+    __all__ += ["WshtlibMiddleware"]
+except ImportError:
+    pass
