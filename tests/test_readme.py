@@ -41,6 +41,29 @@ def test_bootstrap_unhandled_exception_returns_500() -> None:
     assert result == {"statusCode": 500}
 
 
+def test_worker_is_plain_decorator_not_factory() -> None:
+    """@worker is used directly, not called as a factory."""
+    import wshtlib
+
+    def handler(event: dict, context: object) -> None:
+        return None
+
+    wrapped = wshtlib.worker(handler)
+    assert callable(wrapped)
+
+
+def test_worker_unhandled_exception_propagates() -> None:
+    """README: @worker re-raises so Lambda records the failure."""
+    import wshtlib
+
+    @wshtlib.worker
+    def handler(event: dict, context: object) -> None:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        handler({}, object())
+
+
 def test_get_logger_importable_from_wshtlib() -> None:
     """README: from wshtlib import get_logger."""
     import wshtlib

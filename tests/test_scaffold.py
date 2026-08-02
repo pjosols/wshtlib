@@ -121,6 +121,7 @@ def test_init_exports_context_symbols(init_text: str) -> None:
 def test_init_exports_core_symbols(init_text: str) -> None:
     for sym in (
         "bootstrap",
+        "worker",
         "require_env",
         "require_https_url",
         "get_logger",

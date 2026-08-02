@@ -1,6 +1,6 @@
 """Shared runtime library for Wholeshoot services."""
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 from wshtlib.context import (
     clear_context,
@@ -9,7 +9,7 @@ from wshtlib.context import (
     init_context_from_request,
     set_user_id,
 )
-from wshtlib.decorators import bootstrap
+from wshtlib.decorators import bootstrap, worker
 from wshtlib.env import require_env
 from wshtlib.http import require_https_url
 from wshtlib.logger import get_logger, set_lambda_context
@@ -24,6 +24,7 @@ __all__ = [
     "init_context_from_request",
     "set_user_id",
     "bootstrap",
+    "worker",
     "require_env",
     "require_https_url",
     "get_logger",

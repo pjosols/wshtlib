@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.0] - 2026-08-02
+
+### Added
+- `@worker` — Lambda decorator for asynchronous invocations (S3, EventBridge, SQS). Same context init and structured error logging as `@bootstrap`, but re-raises so Lambda records the failure: retries, `on_failure` destinations, DLQ routing, and the `Errors` metric all depend on the exception propagating. No warming-event handling.
+
 ## [0.1.2] - 2026-04-15
 
 ### Changed

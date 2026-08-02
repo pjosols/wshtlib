@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from wshtlib.context import clear_context, get_context
-from wshtlib.decorators import bootstrap
+from wshtlib.decorators import bootstrap, worker
 
 
 @pytest.fixture(autouse=True)
@@ -163,3 +163,92 @@ def test_lambda_handler_not_in_all() -> None:
     import wshtlib
 
     assert "lambda_handler" not in wshtlib.__all__
+
+
+# --- @worker: async invocation mode ---
+
+
+def test_worker_re_raises_unhandled_exception() -> None:
+    @worker
+    def handler(event, context):
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        handler({}, _make_lambda_context())
+
+
+def test_worker_logs_error_before_re_raising() -> None:
+    with patch("wshtlib.decorators.logger") as mock_logger:
+
+        @worker
+        def handler(event, context):
+            raise RuntimeError("oops")
+
+        with pytest.raises(RuntimeError):
+            handler({}, _make_lambda_context())
+
+        mock_logger.error.assert_called_once()
+        call_args = mock_logger.error.call_args[0]
+        assert call_args[1] == "handler"
+        assert mock_logger.error.call_args[1]["exc_info"] is True
+
+
+def test_worker_does_not_short_circuit_warming_events() -> None:
+    called = []
+
+    @worker
+    def handler(event, context):
+        called.append(event)
+        return None
+
+    handler({"source": "lambda-warming"}, _make_lambda_context())
+    assert called == [{"source": "lambda-warming"}]
+
+
+def test_worker_init_context_called_before_handler() -> None:
+    captured = {}
+
+    @worker
+    def handler(event, context):
+        captured.update(get_context())
+
+    event = {"headers": {"x-amzn-trace-id": "Root=1-def"}}
+    handler(event, _make_lambda_context("req-worker"))
+    assert captured["trace_id"] == "Root=1-def"
+    assert captured["correlation_id"] == "req-worker"
+
+
+def test_worker_set_lambda_context_called() -> None:
+    with patch("wshtlib.decorators.set_lambda_context") as mock_set:
+
+        @worker
+        def handler(event, context):
+            return None
+
+        lctx = _make_lambda_context()
+        handler({}, lctx)
+        mock_set.assert_called_once_with(lctx)
+
+
+def test_worker_successful_return_value_passed_through() -> None:
+    @worker
+    def handler(event, context):
+        return {"processed": 3}
+
+    assert handler({}, _make_lambda_context()) == {"processed": 3}
+
+
+def test_worker_preserves_function_metadata() -> None:
+    @worker
+    def my_worker_handler(event, context):
+        """My worker docstring."""
+
+    assert my_worker_handler.__name__ == "my_worker_handler"
+    assert my_worker_handler.__doc__ == "My worker docstring."
+
+
+def test_worker_exported_from_wshtlib() -> None:
+    import wshtlib
+
+    assert callable(wshtlib.worker)
+    assert "worker" in wshtlib.__all__

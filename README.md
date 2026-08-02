@@ -20,6 +20,10 @@ pip install wshtlib[fastapi]
 
 ### Lambda handler
 
+Two decorators, one per invocation mode.
+
+`@bootstrap` — **synchronous** invocations (API Gateway), where the return value is the response:
+
 ```python
 from wshtlib import bootstrap, get_logger
 
@@ -31,10 +35,24 @@ def handler(event, context):
     return {"statusCode": 200}
 ```
 
-The decorator handles:
+It handles:
 - Warming events (`"source": "lambda-warming"`) — returns 200 early
 - Context init and structured log enrichment
 - Unhandled exceptions — logs error, returns 500
+
+`@worker` — **asynchronous** invocations (S3, EventBridge, SQS), where the return value is discarded:
+
+```python
+from wshtlib import worker, get_logger
+
+logger = get_logger("my-worker")
+
+@worker
+def handler(event, context):
+    logger.info("processing", records=len(event["Records"]))
+```
+
+Same context init and structured error logging, but the exception is **re-raised** rather than swallowed — retries, `on_failure` destinations, the DLQ, and the `Errors` metric all depend on Lambda seeing the invocation fail. No warming-event handling.
 
 ### Structured logging
 
