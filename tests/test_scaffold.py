@@ -23,6 +23,7 @@ def test_project_name(pyproject: dict) -> None:
 
 def test_project_version(pyproject: dict) -> None:
     import wshtlib
+
     assert pyproject["project"]["version"] == wshtlib.__version__
 
 

@@ -1,6 +1,6 @@
 """Shared runtime library for Wholeshoot services."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from wshtlib.context import (
     clear_context,

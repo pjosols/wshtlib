@@ -33,7 +33,7 @@ try:
             duration_ms = round((time.monotonic() - start) * 1000)
             ctx = get_context()
             trace_id: Any = ctx.get("trace_id")
-            _logger.info(  # type: ignore[call-arg]
+            _logger.info(
                 "request",
                 method=request.method,
                 path=request.url.path,

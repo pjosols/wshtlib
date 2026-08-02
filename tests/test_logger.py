@@ -5,6 +5,8 @@ import logging
 from io import StringIO
 from unittest.mock import MagicMock
 
+import pytest
+
 import wshtlib.logger as logger_module
 from tests.conftest import emit_with_lambda_context, fresh_logger, make_lambda_context
 from wshtlib.logger import _Logger, get_logger
@@ -103,6 +105,94 @@ class TestJsonOutput:
         assert ":" in entry["location"]
         parts = entry["location"].split(":")
         assert parts[-1].isdigit()
+
+    def test_location_names_the_caller_not_wshtlib(self) -> None:
+        """`location` is for triage: pointing at wshtlib's own frame is useless."""
+        lg = fresh_logger("loc-svc")
+        buf = StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setFormatter(lg._formatter)
+        lg.handlers = [handler]
+
+        def a_caller_function() -> None:
+            lg.info("from here")
+
+        a_caller_function()
+        entry = json.loads(buf.getvalue().strip())
+        assert entry["location"].split(":")[0] == "a_caller_function"
+
+    def test_stdlib_extra_dict_included_in_output(self) -> None:
+        """`extra=` is the stdlib spelling; dropping it silently loses context."""
+        entry = self._emit("info", "event", extra={"shoot_id": "s-123", "status": 200})
+        assert entry["shoot_id"] == "s-123"
+        assert entry["status"] == 200
+
+    def test_extra_dict_and_kwargs_both_included(self) -> None:
+        entry = self._emit("info", "event", extra={"from_extra": 1}, from_kwarg=2)
+        assert entry["from_extra"] == 1
+        assert entry["from_kwarg"] == 2
+
+    def test_kwargs_win_a_key_collision_with_extra(self) -> None:
+        """kwargs are this library's documented spelling, so they take the key."""
+        entry = self._emit("info", "event", extra={"who": "extra"}, who="kwarg")
+        assert entry["who"] == "kwarg"
+
+    def test_extra_key_colliding_with_a_logrecord_attribute_is_safe(self) -> None:
+        """Stdlib raises KeyError on these; routing through our own key does not."""
+        entry = self._emit("info", "event", extra={"module": "billing", "name": "x"})
+        assert entry["module"] == "billing"
+        assert entry["name"] == "x"
+
+    @pytest.mark.parametrize("spelling", ["kwarg", "extra"])
+    @pytest.mark.parametrize(
+        "field", ["level", "message", "timestamp", "service", "location", "trace_id"]
+    )
+    def test_caller_field_cannot_falsify_a_formatter_owned_field(
+        self, field: str, spelling: str
+    ) -> None:
+        """An enrichment field must never replace the record it enriches.
+
+        Without this, `extra={"level": "DEBUG"}` gets an INFO line indexed as
+        DEBUG, and `extra={"message": ...}` replaces the message outright --
+        silent falsification in the one place you look when something breaks.
+        """
+        payload = {field: "FALSIFIED"}
+        kwargs = {spelling: payload} if spelling == "extra" else payload
+        entry = self._emit("info", "the real message", **kwargs)
+        assert entry["level"] == "INFO"
+        assert entry["message"] == "the real message"
+        assert entry["service"] == "test-json"
+        assert entry.get(field) != "FALSIFIED"
+        assert entry[f"extra_{field}"] == "FALSIFIED", "caller value must survive"
+
+    @pytest.mark.parametrize("field", ["level", "msg", "args", "name"])
+    def test_field_named_after_a_log_parameter_does_not_raise(self, field: str) -> None:
+        """These shadowed `_log` parameters used to TypeError, taking down the caller."""
+        lg = fresh_logger("shadow-svc")
+        buf = StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setFormatter(lg._formatter)
+        lg.handlers = [handler]
+        lg.info("charge", **{field: "premium"})
+        entry = json.loads(buf.getvalue().strip())
+        assert entry["message"] == "charge"
+        emitted = entry.get(f"extra_{field}", entry.get(field))
+        assert emitted == "premium"
+
+    def test_caller_fields_are_mirrored_onto_the_record(self) -> None:
+        """Custom filters, %(field)s formatters, and Sentry read record attrs."""
+        lg = fresh_logger("attr-svc")
+        seen: dict[str, object] = {}
+
+        class Capture(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                seen["shoot_id"] = getattr(record, "shoot_id", None)
+                return True
+
+        lg.addFilter(Capture())
+        lg.handlers = [logging.StreamHandler(StringIO())]
+        lg.info("event", shoot_id="s-123")
+        assert seen["shoot_id"] == "s-123"
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +430,60 @@ class TestTraceIdInjection:
 
         with pytest.raises(RuntimeError, match="unexpected"):
             formatter._get_trace_id()
+
+
+# ---------------------------------------------------------------------------
+# Level methods
+# ---------------------------------------------------------------------------
+
+
+class TestLevelMethods:
+    def _capture(self, name: str) -> tuple[_Logger, StringIO]:
+        lg = fresh_logger(name)
+        buf = StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setFormatter(lg._formatter)
+        lg.handlers = [handler]
+        return lg, buf
+
+    @pytest.mark.parametrize(
+        "method,expected",
+        [
+            ("debug", "DEBUG"),
+            ("info", "INFO"),
+            ("warning", "WARNING"),
+            ("error", "ERROR"),
+            ("critical", "CRITICAL"),
+        ],
+    )
+    def test_each_level_method_emits_fields(self, method: str, expected: str) -> None:
+        lg, buf = self._capture(f"lvl-{method}")
+        lg.setLevel(logging.DEBUG)
+        getattr(lg, method)("event", shoot_id="s-1")
+        entry = json.loads(buf.getvalue().strip())
+        assert entry["level"] == expected
+        assert entry["shoot_id"] == "s-1"
+
+    def test_log_method_takes_explicit_level(self) -> None:
+        lg, buf = self._capture("lvl-log")
+        lg.log(logging.WARNING, "event", shoot_id="s-2")
+        entry = json.loads(buf.getvalue().strip())
+        assert entry["level"] == "WARNING"
+        assert entry["shoot_id"] == "s-2"
+
+    def test_exception_method_attaches_traceback(self) -> None:
+        lg, buf = self._capture("lvl-exception")
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            lg.exception("handler failed", op="sync")
+        entry = json.loads(buf.getvalue().strip())
+        assert entry["level"] == "ERROR"
+        assert entry["exception"].startswith("Traceback")
+        assert entry["op"] == "sync"
+
+    def test_call_below_threshold_emits_nothing(self) -> None:
+        lg, buf = self._capture("lvl-suppressed")
+        lg.setLevel(logging.INFO)
+        lg.debug("not emitted", shoot_id="s-3")
+        assert buf.getvalue() == ""

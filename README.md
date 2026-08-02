@@ -63,7 +63,18 @@ logger = get_logger("my-service")
 logger.info("user signed in", user_id="u_123", plan="pro")
 ```
 
-Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `location`, runtime fields, and Lambda context on invocation.
+Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `location`, runtime fields, and Lambda context on invocation. `location` names the calling function and line.
+
+Keyword arguments are the preferred spelling, but stdlib's `extra={...}` works too and lands in the same JSON entry; kwargs win if both supply the same key. Fields are also set as attributes on the `LogRecord`, so custom filters and `%(field)s` formatters can read them.
+
+Field names are unrestricted — including `msg`, `args`, and `level`. Only `exc_info`, `extra`, `stack_info`, and `stacklevel` keep their stdlib meanings and cannot be used as fields. A field whose name collides with one the formatter owns (`level`, `message`, `timestamp`, `service`, `location`, `trace_id`, `exception`, and the runtime/Lambda fields) is emitted with an `extra_` prefix rather than replacing it:
+
+```python
+logger.info("subscription renewed", level="premium")
+# {"level": "INFO", ..., "message": "subscription renewed", "extra_level": "premium"}
+```
+
+This keeps an enrichment field from falsifying the record it was meant to enrich.
 
 ### CloudWatch metrics (EMF)
 

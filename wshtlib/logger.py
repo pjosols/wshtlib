@@ -24,6 +24,62 @@ def _detect_runtime() -> dict[str, Any]:
 
 _RUNTIME_FIELDS: dict[str, Any] = _detect_runtime()
 
+# Keys the formatter owns. A caller field with one of these names is emitted
+# under an "extra_" prefix instead: overwriting them would let an enrichment
+# field falsify the record it was meant to enrich -- an INFO line indexed as
+# DEBUG, a fabricated timestamp, the wrong service, a broken trace correlation.
+_RESERVED_KEYS = frozenset(
+    {
+        "level",
+        "location",
+        "message",
+        "timestamp",
+        "service",
+        "trace_id",
+        "exception",
+        "runtime",
+        "hostname",
+        "pid",
+        "function_name",
+        "function_arn",
+        "function_memory_size",
+        "function_request_id",
+        "cold_start",
+    }
+)
+
+# Attribute names stdlib's LogRecord already uses. Caller fields are mirrored
+# onto the record so custom filters, %(field)s formatters, and handlers that
+# harvest record.__dict__ keep working -- but not these, which would trip
+# stdlib's reserved-name check and raise KeyError at the call site.
+_RECORD_ATTRS = frozenset(
+    {
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
+    }
+)
+
 
 class _JsonFormatter(logging.Formatter):
     def __init__(self) -> None:
@@ -63,10 +119,12 @@ class _JsonFormatter(logging.Formatter):
         trace_id = self._get_trace_id()
         if trace_id:
             entry["trace_id"] = trace_id
-        if hasattr(record, "_extra_keys"):
-            entry.update(record._extra_keys)
         if record.exc_info and record.exc_info[0] is not None:
             entry["exception"] = self.formatException(record.exc_info)
+        fields = getattr(record, "_extra_keys", None)
+        if fields:
+            for key, value in fields.items():
+                entry[f"extra_{key}" if key in _RESERVED_KEYS else key] = value
         return json.dumps(entry, default=str)
 
 
@@ -80,6 +138,18 @@ _ExcInfo = Union[
 
 
 class _Logger(logging.Logger):
+    """Logger accepting structured fields as keyword arguments.
+
+    ``logger.info("user signed in", user_id="u_123")`` and stdlib's
+    ``extra={...}`` both land in the same JSON entry; keyword arguments win a
+    key collision. Fields colliding with a name the formatter owns are emitted
+    with an ``extra_`` prefix rather than replacing it.
+
+    ``exc_info``, ``extra``, ``stack_info``, and ``stacklevel`` keep their
+    stdlib meanings and cannot be used as field names. Every other name is
+    available, including ``msg``, ``args``, and ``level``.
+    """
+
     def __init__(self, name: str, level: int = logging.NOTSET) -> None:
         super().__init__(name, level)
         self._formatter = _JsonFormatter()
@@ -91,30 +161,145 @@ class _Logger(logging.Logger):
     def set_lambda_context(self, context: object) -> None:
         self._formatter.set_lambda_context(context)
 
-    def _log(
+    def _emit(
         self,
         level: int,
         msg: object,
-        args: Union[tuple[object, ...], Mapping[str, object]],
-        exc_info: _ExcInfo = None,
-        extra: Optional[Mapping[str, object]] = None,
-        stack_info: bool = False,
-        stacklevel: int = 1,
-        **kwargs: Any,
+        args: tuple[object, ...],
+        exc_info: _ExcInfo,
+        extra: Optional[Mapping[str, object]],
+        stack_info: bool,
+        stacklevel: int,
+        fields: dict[str, Any],
     ) -> None:
-        if kwargs:
-            merged: dict[str, object] = dict(extra) if extra else {}
-            merged["_extra_keys"] = kwargs
-            extra = merged
+        if not self.isEnabledFor(level):
+            return
+        merged: dict[str, Any] = dict(extra) if extra else {}
+        # Keyword arguments win a collision: they are this library's spelling.
+        merged.update(fields)
+        payload: Optional[dict[str, Any]] = None
+        if merged:
+            payload = {
+                k: v
+                for k, v in merged.items()
+                if k not in _RECORD_ATTRS and k not in _RESERVED_KEYS
+            }
+            payload["_extra_keys"] = merged
+        # +2 skips this frame and the public method that called it, so
+        # `location` resolves to the caller rather than to wshtlib itself.
         super()._log(
             level,
             msg,
             args,
             exc_info=exc_info,
-            extra=extra,
+            extra=payload,
             stack_info=stack_info,
-            stacklevel=stacklevel,
+            stacklevel=stacklevel + 2,
         )
+
+    def debug(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.DEBUG, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def info(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.INFO, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def warning(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.WARNING, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def error(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.ERROR, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def critical(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.CRITICAL, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def exception(  # type: ignore[override]
+        self,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = True,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            logging.ERROR, msg, args, exc_info, extra, stack_info, stacklevel, fields
+        )
+
+    def log(  # type: ignore[override]
+        self,
+        level: int,
+        msg: object,
+        /,
+        *args: object,
+        exc_info: _ExcInfo = None,
+        extra: Optional[Mapping[str, object]] = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **fields: Any,
+    ) -> None:
+        self._emit(level, msg, args, exc_info, extra, stack_info, stacklevel, fields)
 
 
 def get_logger(service_name: str) -> "_Logger":
