@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import wshtlib.logger as logger_module
 from wshtlib.logger import _Logger
 
 # The JSON Schema published in the CloudWatch embedded metric format
@@ -27,7 +28,12 @@ _WSHTLIB_ENV_VARS = (
     "WSHT_ENVIRONMENT",
     "WSHT_METRICS_NAMESPACE",
     "WSHT_SERVICE_NAME",
+    "WSHT_SECRET_CACHE_TTL",
     "AWS_LAMBDA_FUNCTION_NAME",
+    # Lambda exports this on every invocation, and init_context reads it as a
+    # trace-id source -- so a test running inside Lambda-like tooling would
+    # otherwise see a trace id it never set.
+    "_X_AMZN_TRACE_ID",
 )
 
 
@@ -44,6 +50,21 @@ def isolate_wshtlib_env() -> Iterator[None]:
         yield
     finally:
         os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def reset_lambda_fields() -> Iterator[None]:
+    """Forget the invocation's Lambda fields around every test.
+
+    They are module state by design -- a Lambda context describes the process,
+    not one logger -- which means one test's mock context would otherwise go on
+    enriching the log lines of every test that ran after it.
+    """
+    logger_module._lambda_fields = {}
+    logger_module._cold_start = True
+    yield
+    logger_module._lambda_fields = {}
+    logger_module._cold_start = True
 
 
 def capture_log(log_fn, *args, **kwargs) -> dict:

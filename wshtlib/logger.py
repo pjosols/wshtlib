@@ -4,10 +4,22 @@ import json
 import logging
 import os
 import socket
+import threading
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Union
 
+from wshtlib.context import get_context, resolve_service
+
 _cold_start = True
+
+# The invocation's Lambda fields, held once for the process rather than once
+# per logger. A Lambda context describes the process, so every logger reports
+# the same one -- including a logger built after the invocation began, which
+# would otherwise carry none of these fields at all.
+_lambda_fields: dict[str, Any] = {}
+
+# Guards the logger registry against a concurrent get_logger for the same name.
+_registry_lock = threading.Lock()
 
 
 def _detect_runtime() -> dict[str, Any]:
@@ -83,46 +95,21 @@ _RECORD_ATTRS = frozenset(
 
 
 class _JsonFormatter(logging.Formatter):
-    def __init__(self) -> None:
-        super().__init__()
-        self._lambda_context: dict[str, Any] = {}
-
-    def set_lambda_context(self, context: object) -> None:
-        global _cold_start
-        self._lambda_context = {
-            "function_name": getattr(context, "function_name", None),
-            "function_arn": getattr(context, "invoked_function_arn", None),
-            "function_memory_size": getattr(context, "memory_limit_in_mb", None),
-            "function_request_id": getattr(context, "aws_request_id", None),
-            "cold_start": _cold_start,
-        }
-        _cold_start = False
-
     def _get_trace_id(self) -> Optional[str]:
-        try:
-            # Lazy import avoids circular dependency with wshtlib.context.
-            from wshtlib.context import get_context
-
-            return get_context().get("trace_id")
-        except (ImportError, AttributeError):
-            return None
+        trace_id = get_context().get("trace_id")
+        return str(trace_id) if trace_id else None
 
     def _get_service(self, record: logging.LogRecord) -> str:
         """Resolve the service name, falling back to the logger's own name.
 
         Shares ``resolve_service`` with metrics so both report the same value;
         ``record.name`` is the tail, used only where nothing else supplies one.
+        No per-record override is offered: ``service`` is a reserved key, so
+        ``_emit`` strips it before it can reach the record.
 
         record: The log record being formatted.
         """
-        try:
-            # Lazy import avoids circular dependency with wshtlib.context.
-            from wshtlib.context import resolve_service
-
-            resolved = resolve_service(getattr(record, "service", None))
-        except (ImportError, AttributeError):
-            resolved = getattr(record, "service", None)
-        return resolved or record.name
+        return resolve_service() or record.name
 
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
@@ -134,7 +121,7 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
         entry.update(_RUNTIME_FIELDS)
-        entry.update(self._lambda_context)
+        entry.update(_lambda_fields)
         trace_id = self._get_trace_id()
         if trace_id:
             entry["trace_id"] = trace_id
@@ -178,7 +165,8 @@ class _Logger(logging.Logger):
         self.propagate = False
 
     def set_lambda_context(self, context: object) -> None:
-        self._formatter.set_lambda_context(context)
+        """Record the invocation's Lambda context for every logger in the process."""
+        set_lambda_context(context)
 
     def _emit(
         self,
@@ -216,6 +204,11 @@ class _Logger(logging.Logger):
             stacklevel=stacklevel + 2,
         )
 
+    # The seven methods below differ only in a level constant, and the
+    # repetition is load-bearing: these explicit signatures are what make
+    # `logger.info("event", field=1)` type-check under mypy strict. Collapsing
+    # them into a factory or partialmethod erases the typed keyword spelling
+    # this library documents, which 0.3.0 added deliberately.
     def debug(  # type: ignore[override]
         self,
         msg: object,
@@ -321,26 +314,59 @@ class _Logger(logging.Logger):
         self._emit(level, msg, args, exc_info, extra, stack_info, stacklevel, fields)
 
 
+def _resolve_level(raw: Optional[str]) -> int:
+    """Translate a configured level into a logging level number.
+
+    ``setLevel`` rejects anything outside its own name table, and ``get_logger``
+    runs at import in this package -- so a variable declared but left blank, or
+    spelled in lowercase, would otherwise raise ValueError and take down
+    ``import wshtlib`` before the first line was ever logged. An unusable value
+    leaves the default in place instead.
+
+    raw: The configured value, typically ``WSHT_LOG_LEVEL``.
+    Returns a level number, defaulting to INFO.
+    """
+    if not raw:
+        return logging.INFO
+    name = raw.strip().upper()
+    if name.isdigit():
+        return int(name)
+    level = logging.getLevelName(name)
+    # getLevelName returns the string "Level BOGUS" for a name it does not know.
+    return level if isinstance(level, int) else logging.INFO
+
+
 def get_logger(service_name: str) -> "_Logger":
     """Get a structured JSON logger for the given service.
 
     service_name: Logger name / service identifier.
     Returns a _Logger instance (created or retrieved from the logging registry).
     """
-    existing = logging.Logger.manager.loggerDict.get(service_name)
-    if isinstance(existing, _Logger):
-        return existing
-    logger = _Logger(service_name)
-    logger.setLevel(os.getenv("WSHT_LOG_LEVEL", "INFO"))
-    logging.Logger.manager.loggerDict[service_name] = logger
-    return logger
+    with _registry_lock:
+        existing = logging.Logger.manager.loggerDict.get(service_name)
+        if isinstance(existing, _Logger):
+            return existing
+        logger = _Logger(service_name)
+        logger.setLevel(_resolve_level(os.getenv("WSHT_LOG_LEVEL")))
+        logging.Logger.manager.loggerDict[service_name] = logger
+        return logger
 
 
 def set_lambda_context(context: object) -> None:
-    """Propagate Lambda context to all active wshtlib loggers.
+    """Record the invocation's Lambda context for every logger in the process.
+
+    ``cold_start`` belongs to the invocation, not to whichever logger happened
+    to be told about it first: the fields are held once, module-side, so every
+    logger reports the same values and a logger created later still gets them.
 
     context: The Lambda context object.
     """
-    for logger in logging.Logger.manager.loggerDict.values():
-        if isinstance(logger, _Logger):
-            logger.set_lambda_context(context)
+    global _cold_start, _lambda_fields
+    _lambda_fields = {
+        "function_name": getattr(context, "function_name", None),
+        "function_arn": getattr(context, "invoked_function_arn", None),
+        "function_memory_size": getattr(context, "memory_limit_in_mb", None),
+        "function_request_id": getattr(context, "aws_request_id", None),
+        "cold_start": _cold_start,
+    }
+    _cold_start = False

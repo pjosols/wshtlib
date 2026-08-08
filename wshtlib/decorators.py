@@ -46,10 +46,12 @@ def bootstrap(fn: Callable[..., Any]) -> Callable[..., Any]:
         if isinstance(event, dict) and event.get("source") == "lambda-warming":
             return {"statusCode": 200}
 
-        init_context(event, context)
-        set_lambda_context(context)
-
         try:
+            # Inside the try: an event that is not the shape these read -- a
+            # bare list, a string -- would otherwise raise straight past the
+            # handling this decorator exists to provide.
+            init_context(event, context)
+            set_lambda_context(context)
             return fn(event, context)
         except Exception as exc:
             logger.error(
@@ -80,10 +82,11 @@ def worker(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     @functools.wraps(fn)
     def wrapper(event: dict[str, Any], context: Any) -> Any:
-        init_context(event, context)
-        set_lambda_context(context)
-
         try:
+            # Inside the try, as in bootstrap -- here an event of an
+            # unexpected shape would otherwise fail the invocation unlogged.
+            init_context(event, context)
+            set_lambda_context(context)
             return fn(event, context)
         except Exception as exc:
             logger.error(

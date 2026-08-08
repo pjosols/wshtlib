@@ -133,6 +133,44 @@ def test_response_body_unchanged() -> None:
     assert resp.json() == {"ok": True}
 
 
+# --- a handler that raises ---
+
+
+def _make_failing_app() -> Starlette:
+    async def boom(request: Request) -> JSONResponse:
+        raise RuntimeError("kaboom")
+
+    app = Starlette(routes=[Route("/boom", boom)])
+    app.add_middleware(WshtlibMiddleware)
+    return app
+
+
+def test_failing_request_is_still_logged() -> None:
+    """The request most worth having in the access log produced no line at all."""
+    client = TestClient(_make_failing_app(), raise_server_exceptions=False)
+    entry = _capture_log_entry(lambda: client.get("/boom"))
+
+    assert entry["message"] == "request"
+    assert entry["path"] == "/boom"
+    assert entry["status"] == 500
+    assert entry["level"] == "ERROR"
+    assert isinstance(entry["duration_ms"], int)
+
+
+def test_failing_request_log_carries_the_traceback() -> None:
+    client = TestClient(_make_failing_app(), raise_server_exceptions=False)
+    entry = _capture_log_entry(lambda: client.get("/boom"))
+
+    assert "kaboom" in str(entry["exception"])
+
+
+def test_the_exception_still_propagates() -> None:
+    """Answering the request here would pre-empt the app's own handlers."""
+    client = TestClient(_make_failing_app())
+    with pytest.raises(RuntimeError, match="kaboom"):
+        client.get("/boom")
+
+
 # --- WshtlibMiddleware is importable ---
 
 

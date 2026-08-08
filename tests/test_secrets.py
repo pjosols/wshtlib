@@ -128,3 +128,91 @@ def test_exported_from_package() -> None:
 
     assert wshtlib.require_secret is require_secret
     assert "require_secret" in wshtlib.__all__
+
+
+# --- cache lifetime ---
+
+
+def test_cached_value_is_refetched_once_the_ttl_elapses(monkeypatch) -> None:
+    """A rotated secret was served stale for the life of the execution environment.
+
+    A Lambda container outlives a Secrets Manager rotation by hours, and the
+    cache had neither an expiry nor a way to invalidate it -- so the outage
+    ended only when the container happened to be recycled.
+    """
+    monkeypatch.setenv("WSHT_SECRET_CACHE_TTL", "300")
+    clock = [1000.0]
+    monkeypatch.setattr(secrets_mod.time, "monotonic", lambda: clock[0])
+
+    mods, mock_client = _boto3_mocks({"SecretString": "before-rotation"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        assert require_secret("my/secret") == "before-rotation"
+
+        clock[0] += 299
+        assert require_secret("my/secret") == "before-rotation"
+        mock_client.get_secret_value.assert_called_once()
+
+        clock[0] += 2
+        mock_client.get_secret_value.return_value = {"SecretString": "after-rotation"}
+        assert require_secret("my/secret") == "after-rotation"
+
+
+def test_ttl_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("WSHT_SECRET_CACHE_TTL", "10")
+    clock = [1000.0]
+    monkeypatch.setattr(secrets_mod.time, "monotonic", lambda: clock[0])
+
+    mods, mock_client = _boto3_mocks({"SecretString": "v1"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        require_secret("my/secret")
+        clock[0] += 11
+        require_secret("my/secret")
+
+    assert mock_client.get_secret_value.call_count == 2
+
+
+def test_an_unparseable_ttl_leaves_the_default_in_place(monkeypatch) -> None:
+    """A config typo must not fail a secret read."""
+    monkeypatch.setenv("WSHT_SECRET_CACHE_TTL", "five minutes")
+    mods, mock_client = _boto3_mocks({"SecretString": "v1"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        require_secret("my/secret")
+        require_secret("my/secret")
+
+    mock_client.get_secret_value.assert_called_once()
+
+
+def test_clear_secret_cache_forces_a_refetch() -> None:
+    from wshtlib import clear_secret_cache
+
+    mods, mock_client = _boto3_mocks({"SecretString": "v1"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        require_secret("my/secret")
+        clear_secret_cache()
+        require_secret("my/secret")
+
+    assert mock_client.get_secret_value.call_count == 2
+
+
+# --- binary secrets ---
+
+
+def test_binary_secret_is_not_reported_as_empty() -> None:
+    """The secret is populated; calling it empty sends the operator elsewhere."""
+    mods, _ = _boto3_mocks({"SecretBinary": b"\x00\x01\x02"})
+    with pytest.MonkeyPatch().context() as mp:
+        for k, v in mods.items():
+            mp.setitem(sys.modules, k, v)
+        with pytest.raises(RuntimeError, match="binary") as exc:
+            require_secret("my/secret")
+
+    assert "empty" not in str(exc.value)
+    assert "my/secret" not in str(exc.value)

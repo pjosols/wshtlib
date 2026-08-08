@@ -363,3 +363,37 @@ def test_a_failing_flush_is_logged() -> None:
     assert mock_logger.error.called
     assert "flush metrics" in mock_logger.error.call_args[0][0]
     default_metrics._metrics.clear()
+
+
+# --- events that are not the shape the decorators read ---
+
+
+@pytest.mark.parametrize("event", [["a", "b"], "a-string", None, 42])
+def test_bootstrap_handles_an_event_of_an_unexpected_shape(event) -> None:
+    """init_context ran outside the try, so this raised straight past the 500.
+
+    The decorator promises to catch an unhandled exception and answer 500; a
+    bare list reaching init_context raised AttributeError from the decorator's
+    own setup instead, before the handling it exists to provide.
+    """
+
+    @bootstrap
+    def handler(event, context):
+        return {"statusCode": 200}
+
+    assert handler(event, _make_lambda_context()) == {"statusCode": 500}
+
+
+@pytest.mark.parametrize("event", [["a", "b"], "a-string", None, 42])
+def test_worker_logs_an_event_of_an_unexpected_shape_before_re_raising(event) -> None:
+    """Same defect in worker, where the failure escaped unlogged."""
+
+    @worker
+    def handler(event, context):
+        return None
+
+    with patch("wshtlib.decorators.logger") as mock_logger:
+        with pytest.raises(Exception):
+            handler(event, _make_lambda_context())
+
+    assert mock_logger.error.called

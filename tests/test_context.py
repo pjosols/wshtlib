@@ -1,5 +1,6 @@
 """Test request-scoped context store."""
 
+import uuid
 from unittest.mock import MagicMock
 
 from wshtlib.context import (
@@ -7,6 +8,8 @@ from wshtlib.context import (
     get_context,
     init_context,
     init_context_from_request,
+    resolve_service,
+    set_service,
     set_user_id,
 )
 
@@ -82,16 +85,87 @@ def test_init_context_from_request_trace_id() -> None:
     assert c["user_id"] is None
 
 
-def test_init_context_from_request_correlation_id_fallback_to_path() -> None:
+def test_init_context_from_request_correlation_id_is_generated_per_request() -> None:
+    """Two requests to one path get distinct ids.
+
+    The fallback used to be the request path, so every call to /health shared
+    the correlation id "/health" -- filtering a log search by it returned an
+    unbounded mix of unrelated requests, which is the opposite of the job.
+    """
     req = _make_request({"x-amzn-trace-id": "Root=1-x"}, path="/shoots/abc")
     init_context_from_request(req)
-    assert get_context()["correlation_id"] == "/shoots/abc"
+    first = get_context()["correlation_id"]
+    init_context_from_request(req)
+    second = get_context()["correlation_id"]
+
+    assert first != second
+    assert "/shoots/abc" not in (first, second)
+    assert uuid.UUID(first).version == 4
 
 
 def test_init_context_from_request_no_trace_id() -> None:
     req = _make_request({})
     init_context_from_request(req)
     assert get_context()["trace_id"] is None
+
+
+# --- trace id sources ---
+
+
+def test_init_context_finds_trace_header_whatever_its_casing() -> None:
+    """REST APIs and ALBs keep the client's casing; only HTTP API v2 lowercases."""
+    init_context(
+        {
+            "headers": {"X-Amzn-Trace-Id": "Root=1-rest"},
+            "requestContext": {"requestId": "r-1"},
+        },
+        MagicMock(aws_request_id="req-1"),
+    )
+    assert get_context()["trace_id"] == "Root=1-rest"
+
+
+def test_init_context_falls_back_to_the_lambda_trace_env_var(monkeypatch) -> None:
+    """Lambda exports the active X-Ray header even where an event has no headers."""
+    monkeypatch.setenv("_X_AMZN_TRACE_ID", "Root=1-env")
+    init_context({}, MagicMock(aws_request_id="req-1"))
+    assert get_context()["trace_id"] == "Root=1-env"
+
+
+def test_request_id_is_used_only_when_no_trace_header_exists(monkeypatch) -> None:
+    monkeypatch.delenv("_X_AMZN_TRACE_ID", raising=False)
+    event = {
+        "headers": {"content-type": "application/json"},
+        "requestContext": {"requestId": "r-2"},
+    }
+    init_context(event, MagicMock())
+    assert get_context()["trace_id"] == "r-2"
+
+
+# --- service survives a new request context ---
+
+
+def test_set_service_survives_init_context() -> None:
+    """A module-scope set_service must outlive the per-invocation context reset.
+
+    init_context installed a fresh three-key dict, so under @bootstrap and
+    @worker -- which call it on every invocation -- set_service was silently
+    dead and both logs and the metrics dimension fell back to the function name.
+    """
+    set_service("billing")
+    init_context({}, MagicMock(aws_request_id="req-1"))
+    assert resolve_service() == "billing"
+
+
+def test_set_service_survives_init_context_from_request() -> None:
+    set_service("billing")
+    init_context_from_request(_make_request({}))
+    assert resolve_service() == "billing"
+
+
+def test_clear_context_clears_the_service() -> None:
+    set_service("billing")
+    clear_context()
+    assert resolve_service() is None
 
 
 # --- get_context returns a copy ---

@@ -2,6 +2,8 @@
 
 import io
 import json
+import threading
+import time
 from typing import Any
 
 import jsonschema
@@ -12,6 +14,7 @@ from wshtlib.context import clear_context, set_service
 from wshtlib.metrics import (
     _MAX_METRIC_DEFINITIONS,
     _MAX_VALUES_PER_METRIC,
+    _RESERVED_METRIC_NAMES,
     MetricsContext,
 )
 
@@ -384,6 +387,121 @@ def test_empty_dimensions_when_nothing_resolves() -> None:
     m = MetricsContext(namespace=NS)
     m.count("X")
     assert directive(emit(m))["Dimensions"] == [[]]
+
+
+# --- names reserved by the document itself ---
+
+
+@pytest.mark.parametrize("name", ["service", "environment", "_aws"])
+def test_reserved_document_keys_are_refused_as_metric_names(name: str) -> None:
+    """A metric value written over one of these invalidates the whole document.
+
+    Metric values sit at the document root beside the dimensions and the _aws
+    directive, and the later spread won: a metric named "service" replaced its
+    own dimension with a number where CloudWatch requires a string, and one
+    named "_aws" replaced the directive describing the entire payload. Either
+    way CloudWatch rejects the document whole -- losing every metric in it,
+    which is the very failure the limit-flushing exists to prevent.
+    """
+    m = MetricsContext(namespace=NS)
+    with pytest.raises(ValueError, match="reserved"):
+        m.put(name, 1.0)
+
+
+def test_a_refused_name_records_nothing() -> None:
+    m = MetricsContext(namespace=NS)
+    with pytest.raises(ValueError):
+        m.put("service", 1.0)
+    assert m.flush(io.StringIO()) is None
+
+
+def test_refusal_does_not_depend_on_the_dimension_being_populated(
+    monkeypatch,
+) -> None:
+    """Validity must not change with deploy config, passing in CI and failing in prod."""
+    monkeypatch.delenv("WSHT_ENVIRONMENT", raising=False)
+    m = MetricsContext(namespace=NS)
+    with pytest.raises(ValueError, match="reserved"):
+        m.put("environment", 1.0)
+
+
+def test_the_reserved_set_covers_every_key_the_document_writes(
+    monkeypatch,
+) -> None:
+    """Guards against a dimension being added without being reserved."""
+    monkeypatch.setenv("WSHT_ENVIRONMENT", "prod")
+    set_service("checkout")
+    m = MetricsContext(namespace=NS)
+    m.put("Latency", 1.0, unit="Milliseconds")
+
+    document_keys = set(emit(m)) - {"Latency"}
+
+    assert document_keys <= _RESERVED_METRIC_NAMES
+
+
+# --- concurrency ---
+
+
+class _SlowSink:
+    """A sink that dawdles mid-write, holding open the window under test.
+
+    flush serialised its metrics, wrote them, and only then cleared them. The
+    gap is normally too narrow to hit on purpose; a slow write widens it to
+    something a second thread can reliably step into.
+    """
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def write(self, line: str) -> int:
+        time.sleep(0.05)
+        self.lines.append(line)
+        return len(line)
+
+
+def _emitted_total(sink: _SlowSink, name: str) -> float:
+    """Sum every value emitted for one metric name across all documents."""
+    total = 0.0
+    for line in sink.lines:
+        values = json.loads(line).get(name)
+        if values is None:
+            continue
+        total += sum(values) if isinstance(values, list) else values
+    return total
+
+
+def test_a_value_recorded_while_a_flush_is_in_flight_is_not_lost() -> None:
+    sink = _SlowSink()
+    m = MetricsContext(namespace=NS, output=sink)  # type: ignore[arg-type]
+    m.put("Hits", 1.0, unit="Count")
+
+    flusher = threading.Thread(target=m.flush)
+    flusher.start()
+    time.sleep(0.01)  # let the flush reach the write
+    m.put("Hits", 1.0, unit="Count")
+    flusher.join()
+    m.flush()
+
+    assert _emitted_total(sink, "Hits") == 2.0
+
+
+def test_two_flushes_at_once_do_not_emit_the_same_values_twice() -> None:
+    """Both used to pass the empty check and serialise the same values.
+
+    The metric was then counted twice in CloudWatch -- worse than losing it,
+    because nothing about the number looks wrong.
+    """
+    sink = _SlowSink()
+    m = MetricsContext(namespace=NS, output=sink)  # type: ignore[arg-type]
+    m.put("Hits", 1.0, unit="Count")
+
+    flushers = [threading.Thread(target=m.flush) for _ in range(2)]
+    for flusher in flushers:
+        flusher.start()
+    for flusher in flushers:
+        flusher.join()
+
+    assert _emitted_total(sink, "Hits") == 1.0
 
 
 # --- package-level import shadowing ---

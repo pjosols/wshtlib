@@ -88,6 +88,8 @@ metrics.flush()
 
 `metrics` is a module-level `MetricsContext` instance, and `@bootstrap`/`@worker` flush it for you when the handler returns. For isolated contexts (e.g. per-request), instantiate `MetricsContext()` directly — one you create yourself is one you flush yourself.
 
+A context is safe to record into and flush from several threads at once. What sharing one still costs you is attribution: a shared context accumulates everything into a single document and resolves its dimensions when it flushes, so under a concurrent server a metric recorded while serving one request can be flushed by another and stamped with that request's `service`. Where that matters, use a context per request or bind `service=` when you construct it.
+
 **A namespace is required.** Pass `MetricsContext(namespace=...)` or set `WSHT_METRICS_NAMESPACE`; `flush` raises `RuntimeError` if neither does. It is resolved per flush, so setting the variable after import works.
 
 Recording the same name more than once keeps every value rather than replacing it:
@@ -102,6 +104,8 @@ metrics.put("Duration", 60.0, unit="Milliseconds")
 
 CloudWatch derives Sum, Average, Minimum, Maximum and SampleCount from those arrays, so a counter's total is its Sum. A name recorded once serialises as a bare number. Recording one name under two different units raises `ValueError` — a single metric definition carries a single unit, and picking one silently would mislabel real measurements.
 
+Three names are refused outright, also with `ValueError`: `service`, `environment`, and `_aws`. Metric values sit at the root of the document beside the dimensions and the directive that describes it, so a metric borrowing one of those names overwrites it — and CloudWatch rejects the resulting document whole, losing every metric in it.
+
 EMF caps a document at 100 metric definitions and 100 values per metric, and CloudWatch rejects an over-limit document whole — losing every metric in it, not just the one that overflowed. Crossing either limit therefore flushes the accumulated metrics and starts a new document, so `put` may write before you call `flush`.
 
 ### Service name
@@ -114,6 +118,8 @@ Logging and metrics resolve the service through `resolve_service`, taking the fi
 4. `AWS_LAMBDA_FUNCTION_NAME`, which Lambda always sets
 
 A log line and a metric emitted from the same context therefore report the same `service`. If nothing supplies a value, logs fall back to the logger's own name and metrics omit the dimension rather than invent one.
+
+`set_service` is initialisation-time configuration: call it at import, where it survives the context reset that `@bootstrap` and `@worker` perform on every invocation. It travels the way any `ContextVar` does, which is to say not into threads — a `def` endpoint running in Starlette's threadpool, anything under `TestClient`, or a call made from a FastAPI lifespan handler will not see it. Use `WSHT_SERVICE_NAME` for a value that must hold process-wide.
 
 Keep dimensions low-cardinality: every unique combination becomes its own CloudWatch metric and bills accordingly.
 
@@ -140,6 +146,8 @@ app.add_middleware(WshtlibMiddleware)
 
 Initialises request context, logs `method`, `path`, `status`, `duration_ms` per request, and injects `X-Trace-Id` into the response.
 
+A request whose handler raises is logged too — at `error`, with `status` 500 and the traceback — and the exception is then re-raised so your own exception handlers still decide the response. No `X-Trace-Id` accompanies that path, there being no response yet to carry it.
+
 ### Utilities
 
 ```python
@@ -150,16 +158,19 @@ endpoint = require_https_url(require_env("API_URL"))  # raises ValueError if not
 api_key = require_secret("api/key")           # raises RuntimeError if missing/empty, cached
 ```
 
+Secrets are cached for `WSHT_SECRET_CACHE_TTL` seconds, 300 by default. The lifetime is the point: a Lambda execution environment outlives a rotation by hours, so a secret cached indefinitely goes on being served after it stops working. Call `clear_secret_cache()` to discard the cache at once.
+
 ## Environment variables
 
 Every variable wshtlib reads is prefixed, so nothing else in the environment can steer it by accident.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WSHT_LOG_LEVEL` | `INFO` | Logger level |
+| `WSHT_LOG_LEVEL` | `INFO` | Logger level. Case-insensitive; a blank or unrecognised value leaves the default in place rather than failing the import |
 | `WSHT_METRICS_NAMESPACE` | — | CloudWatch namespace. Required unless passed to `MetricsContext` |
 | `WSHT_SERVICE_NAME` | — | `service` dimension and log field, unless set explicitly |
 | `WSHT_ENVIRONMENT` | — | Added as a metrics dimension if set |
+| `WSHT_SECRET_CACHE_TTL` | `300` | Seconds a secret stays cached; `0` disables caching |
 
 ## Development
 

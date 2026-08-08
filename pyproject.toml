@@ -1,6 +1,6 @@
 [project]
 name = "wshtlib"
-version = "0.4.0"
+version = "0.5.0"
 description = "Structured logging, EMF metrics, and request context for AWS Lambda"
 readme = "README.md"
 authors = [{ name = "Wholeshoot" }]

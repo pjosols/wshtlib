@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.0] - 2026-08-08
+
+### Fixed
+- `import wshtlib` no longer fails on a `WSHT_LOG_LEVEL` that is blank or lowercase. The value went straight to `setLevel`, which accepts only the names in its own table, and this package builds a logger at import — so a variable declared but left empty, routine in Terraform and SAM, raised `ValueError` during initialisation and took the function down before a line could be logged. An unusable value now leaves the default in place. The existing default-level test set the level itself before asserting on it, so it never exercised the path.
+- `cold_start` is true for every logger on a cold start, not just the first one told about the invocation. The flag was consumed by whichever logger heard first, and this package builds one at import, so it always won — leaving every application logger reporting `false` on a genuine cold start, which is precisely backwards for the latency triage the field exists for. The test that appeared to cover it used a single logger.
+- A logger built after the invocation began now carries the Lambda fields too. They were held per logger, so one created inside a handler had no `function_name`, no request id, nothing.
+- A metric named `service`, `environment`, or `_aws` is refused with `ValueError` instead of destroying the document. Metric values are written at the root of the embedded metric format document alongside the dimensions and the `_aws` directive, and were written last: such a metric overwrote a dimension with a number where CloudWatch requires a string, or replaced the directive describing the whole payload. CloudWatch rejects the result whole — every metric in it lost, the same failure the format's limits are handled to avoid.
+- `MetricsContext` is safe to use from several threads. `flush` serialised its metrics, wrote them, and only then cleared them: a value recorded in that window was dropped, and two threads flushing at once both passed the empty check and serialised the same values, publishing them twice. A double-counted metric is worse than a lost one, nothing about the number looking wrong.
+- `set_service` survives the start of a request. `init_context` installed a fresh dictionary, so under `@bootstrap` and `@worker` — which call it on every invocation — a service set during initialisation was silently discarded, and both the log field and the metric dimension fell back to the Lambda function name. No test covered the interaction.
+- The X-Ray trace header is found whatever its casing. Only API Gateway's HTTP API lowercases header names; REST APIs and ALBs pass through the client's own casing, so on those the header was missed and `trace_id` quietly became the request id, unjoinable to the trace. Lambda's `_X_AMZN_TRACE_ID` is now consulted as well, which covers event sources that carry no headers at all.
+- `@bootstrap` returns 500, and `@worker` logs, for an event that is not the shape they read. Context initialisation ran outside the `try`, so a bare list or a string raised out of the decorator's own setup, past the handling it exists to provide.
+- A failing request is logged by the FastAPI middleware. The call to the endpoint was unguarded, so the request most worth having in the access log produced no line at all. It is now logged at error with the status and the traceback, and the exception re-raised so the application's own handlers still decide the response.
+- A binary secret is no longer reported as empty. `require_secret` read only `SecretString`, so a secret stored as `SecretBinary` — populated, merely the wrong type — sent the operator looking for the wrong problem.
+
+### Added
+- `clear_secret_cache()` discards every cached secret.
+- Secrets expire from the cache after `WSHT_SECRET_CACHE_TTL` seconds, 300 by default. A Lambda execution environment outlives a rotation by hours, and a cache with no lifetime and no way to invalidate it went on serving a secret after it stopped working, recovering only when the container happened to be recycled.
+
+### Changed
+- The correlation id for a request carrying no `x-correlation-id` is now generated rather than taken from the request path. Every call to `/health` shared the correlation id `"/health"`, so filtering by it returned an unbounded mix of unrelated requests — the opposite of the field's purpose.
+- `set_service` is documented as initialisation-time configuration. It is a `ContextVar`, so it does not reach other threads: a `def` endpoint in Starlette's threadpool, anything under `TestClient`, or a call from a lifespan handler will not see it. `WSHT_SERVICE_NAME` is the setting that holds process-wide. As a consequence of the fix above, a value set part-way through an invocation now also persists into later invocations on a warm container.
+
+### Upgrading
+- **A metric named `service`, `environment`, or `_aws` now raises.** Such a metric published nothing before — the document carrying it was rejected in full — so no working data is lost, but the call site has to be renamed rather than silently failing.
+- **`correlation_id` is a UUID where a request has no `x-correlation-id` header**, in place of the request path. Anything grouping on that value sees a different one.
+
 ## [0.4.0] - 2026-08-08
 
 ### Fixed

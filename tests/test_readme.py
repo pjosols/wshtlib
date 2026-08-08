@@ -240,3 +240,36 @@ def test_log_level_env_var_applied_to_new_logger(
     # Use a unique name to avoid hitting the cache
     logger = log_mod.get_logger("_readme_test_debug_logger")
     assert logger.level == logging.DEBUG
+
+
+def test_reserved_metric_names_are_refused() -> None:
+    """README: service, environment and _aws are refused as metric names."""
+    from wshtlib import MetricsContext
+
+    m = MetricsContext(namespace="ReadmeNS")
+    for name in ("service", "environment", "_aws"):
+        with pytest.raises(ValueError):
+            m.put(name, 1.0)
+
+
+def test_clear_secret_cache_is_exported() -> None:
+    """README: clear_secret_cache() discards the cache at once."""
+    import wshtlib
+    import wshtlib.secrets as secrets_mod
+
+    secrets_mod._cache["readme/secret"] = (float("inf"), "value")
+    wshtlib.clear_secret_cache()
+    assert secrets_mod._cache == {}
+    assert "clear_secret_cache" in wshtlib.__all__
+
+
+def test_unusable_log_level_leaves_the_default_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """README: a blank or unrecognised WSHT_LOG_LEVEL does not fail the import."""
+    import logging
+
+    import wshtlib.logger as log_mod
+
+    monkeypatch.setenv("WSHT_LOG_LEVEL", "")
+    assert log_mod.get_logger("_readme_test_blank_level").level == logging.INFO

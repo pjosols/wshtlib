@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from io import StringIO
 from unittest.mock import MagicMock
 
@@ -14,7 +15,7 @@ from tests.conftest import (
     fresh_logger,
     make_lambda_context,
 )
-from wshtlib.logger import _Logger, get_logger
+from wshtlib.logger import _Logger, get_logger, set_lambda_context
 
 # ---------------------------------------------------------------------------
 # get_logger
@@ -46,6 +47,49 @@ class TestGetLogger:
         monkeypatch.setenv("WSHT_LOG_LEVEL", "DEBUG")
         lg = get_logger("svc-debug-env")
         assert lg.level == logging.DEBUG
+
+    def test_unset_level_really_defaults_to_info(self, monkeypatch) -> None:
+        """Unlike the test above, this one lets get_logger choose the level."""
+        monkeypatch.delenv("WSHT_LOG_LEVEL", raising=False)
+        assert get_logger("svc-level-unset").level == logging.INFO
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("debug", logging.DEBUG),
+            (" WARNING ", logging.WARNING),
+            ("30", 30),
+            ("", logging.INFO),
+            ("   ", logging.INFO),
+            ("verbose", logging.INFO),
+        ],
+    )
+    def test_level_is_read_without_ever_raising(
+        self, monkeypatch, raw: str, expected: int
+    ) -> None:
+        """setLevel rejects anything outside its own name table.
+
+        get_logger runs at import inside this package, so a variable declared
+        but left blank -- routine in Terraform and SAM -- or spelled in
+        lowercase used to raise ValueError and take down `import wshtlib`
+        entirely, before a single line could be logged.
+        """
+        monkeypatch.setenv("WSHT_LOG_LEVEL", raw)
+        assert get_logger(f"svc-level-{raw!r}").level == expected
+
+    def test_blank_level_does_not_break_importing_the_package(
+        self, monkeypatch
+    ) -> None:
+        import subprocess
+        import sys
+
+        env = {**os.environ, "WSHT_LOG_LEVEL": ""}
+        result = subprocess.run(
+            [sys.executable, "-c", "import wshtlib; print(wshtlib.__version__)"],
+            capture_output=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr.decode()
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +312,37 @@ class TestLambdaContext:
         entry = json.loads(buf.getvalue().strip())
         assert entry["cold_start"] is False
 
+    def test_cold_start_is_true_for_every_logger_not_only_the_first(
+        self, monkeypatch
+    ) -> None:
+        """The flag describes the invocation, not whichever logger heard first.
+
+        It used to be consumed by the first logger told about the context, and
+        wshtlib.decorators builds one at import -- so it always got there first
+        and every application logger reported cold_start False on a genuine
+        cold start, which is exactly backwards for latency triage.
+        """
+        monkeypatch.setattr(logger_module, "_cold_start", True)
+        set_lambda_context(make_lambda_context())
+
+        first = capture_log(fresh_logger("cold-start-a").info, "one")
+        second = capture_log(fresh_logger("cold-start-b").info, "two")
+
+        assert first["cold_start"] is True
+        assert second["cold_start"] is True
+
+    def test_logger_built_after_the_context_arrived_still_carries_it(
+        self, monkeypatch
+    ) -> None:
+        """Enrichment cannot depend on a logger existing before the invocation."""
+        monkeypatch.setattr(logger_module, "_cold_start", True)
+        set_lambda_context(make_lambda_context(function_name="late-svc"))
+
+        entry = capture_log(fresh_logger("built-late").info, "late")
+
+        assert entry["function_name"] == "late-svc"
+        assert entry["function_request_id"] == "req-abc-123"
+
     def test_missing_context_attributes_handled_gracefully(self) -> None:
         ctx = object()
         lg = fresh_logger("bare-ctx-svc")
@@ -401,40 +476,10 @@ class TestTraceIdInjection:
         entry = self._emit()
         assert "trace_id" not in entry
 
-    def test_trace_id_absent_on_import_error(self, monkeypatch) -> None:
-        """ImportError from lazy import returns None, not a crash."""
-        import sys
-
-        monkeypatch.setitem(sys.modules, "wshtlib.context", None)
-        entry = self._emit()
-        assert "trace_id" not in entry
-
-    def test_trace_id_absent_on_attribute_error(self, monkeypatch) -> None:
-        """AttributeError (e.g. get_context missing) returns None, not a crash."""
-        import types
-
-        fake_mod = types.ModuleType("wshtlib.context")
-        monkeypatch.setitem(__import__("sys").modules, "wshtlib.context", fake_mod)
-        entry = self._emit()
-        assert "trace_id" not in entry
-
-    def test_unexpected_exception_propagates(self, monkeypatch) -> None:
-        """Exceptions other than ImportError/AttributeError must not be swallowed."""
-        import types
-
-        import pytest
-
-        fake_mod = types.ModuleType("wshtlib.context")
-
-        def _boom():
-            raise RuntimeError("unexpected")
-
-        fake_mod.get_context = _boom  # type: ignore[attr-defined]
-        monkeypatch.setitem(__import__("sys").modules, "wshtlib.context", fake_mod)
-        formatter = fresh_logger("trace-unexpected")._formatter
-
-        with pytest.raises(RuntimeError, match="unexpected"):
-            formatter._get_trace_id()
+    # The three tests that stood here covered a lazy import of wshtlib.context
+    # and its ImportError/AttributeError fallback. wshtlib.context imports
+    # nothing from this package, so there was never a cycle to break: the
+    # import is now made at module scope and the unreachable fallback is gone.
 
 
 # ---------------------------------------------------------------------------
