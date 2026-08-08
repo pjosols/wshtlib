@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 import pytest
 
 import wshtlib.logger as logger_module
-from tests.conftest import emit_with_lambda_context, fresh_logger, make_lambda_context
+from tests.conftest import (
+    capture_log,
+    emit_with_lambda_context,
+    fresh_logger,
+    make_lambda_context,
+)
 from wshtlib.logger import _Logger, get_logger
 
 # ---------------------------------------------------------------------------
@@ -32,13 +37,13 @@ class TestGetLogger:
         assert lg1 is not lg2
 
     def test_log_level_defaults_to_info(self, monkeypatch) -> None:
-        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        monkeypatch.delenv("WSHT_LOG_LEVEL", raising=False)
         lg = _Logger("svc-level-default")
         lg.setLevel(logging.getLevelName("INFO"))
         assert lg.level == logging.INFO
 
     def test_log_level_from_env(self, monkeypatch) -> None:
-        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("WSHT_LOG_LEVEL", "DEBUG")
         lg = get_logger("svc-debug-env")
         assert lg.level == logging.DEBUG
 
@@ -233,9 +238,9 @@ class TestExceptionLogging:
 
 class TestLambdaContext:
     def test_function_name_in_output(self) -> None:
-        ctx = make_lambda_context(function_name="wholeshoot-api")
+        ctx = make_lambda_context(function_name="orders-api")
         entry = emit_with_lambda_context(ctx)
-        assert entry["function_name"] == "wholeshoot-api"
+        assert entry["function_name"] == "orders-api"
 
     def test_request_id_in_output(self) -> None:
         ctx = make_lambda_context(request_id="req-xyz")
@@ -487,3 +492,31 @@ class TestLevelMethods:
         lg.setLevel(logging.INFO)
         lg.debug("not emitted", shoot_id="s-3")
         assert buf.getvalue() == ""
+
+
+# ---------------------------------------------------------------------------
+# logger field
+# ---------------------------------------------------------------------------
+
+
+class TestLoggerField:
+    """``service`` names where the code ran; ``logger`` names what emitted it."""
+
+    def test_logger_field_carries_the_logger_name(self) -> None:
+        entry = capture_log(fresh_logger("orders.api.checkout").info, "an event")
+        assert entry["logger"] == "orders.api.checkout"
+
+    def test_logger_field_is_independent_of_service(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WSHT_SERVICE_NAME", "orders")
+        entry = capture_log(fresh_logger("orders.api.checkout").info, "an event")
+        assert entry["service"] == "orders"
+        assert entry["logger"] == "orders.api.checkout"
+
+    def test_caller_field_named_logger_cannot_overwrite_it(self) -> None:
+        entry = capture_log(
+            fresh_logger("real-name").info, "an event", logger="impostor"
+        )
+        assert entry["logger"] == "real-name"
+        assert entry["extra_logger"] == "impostor"

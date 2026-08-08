@@ -1,4 +1,4 @@
-"""Secrets Manager helpers for Wholeshoot services."""
+"""AWS Secrets Manager helpers."""
 
 _cache: dict[str, str] = {}
 

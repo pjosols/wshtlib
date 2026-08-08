@@ -1,12 +1,14 @@
-"""Shared runtime library for Wholeshoot services."""
+"""Structured logging, EMF metrics, and request context for AWS Lambda."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from wshtlib.context import (
     clear_context,
     get_context,
     init_context,
     init_context_from_request,
+    resolve_service,
+    set_service,
     set_user_id,
 )
 from wshtlib.decorators import bootstrap, worker
@@ -22,6 +24,8 @@ __all__ = [
     "get_context",
     "init_context",
     "init_context_from_request",
+    "resolve_service",
+    "set_service",
     "set_user_id",
     "bootstrap",
     "worker",

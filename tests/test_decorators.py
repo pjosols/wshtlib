@@ -1,11 +1,13 @@
 """Test Lambda handler decorator."""
 
+import json
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from wshtlib.context import clear_context, get_context
-from wshtlib.decorators import bootstrap, worker
+from wshtlib.decorators import bootstrap, default_metrics, worker
 
 
 @pytest.fixture(autouse=True)
@@ -252,3 +254,112 @@ def test_worker_exported_from_wshtlib() -> None:
 
     assert callable(wshtlib.worker)
     assert "worker" in wshtlib.__all__
+
+
+# --- metrics flushed on the way out ---
+
+
+@pytest.fixture
+def metrics_output(monkeypatch: pytest.MonkeyPatch) -> StringIO:
+    """Drain the module-level metrics context and redirect it to a buffer."""
+    default_metrics._metrics.clear()
+    buf = StringIO()
+    monkeypatch.setattr(default_metrics, "_output", buf)
+    monkeypatch.setenv("WSHT_METRICS_NAMESPACE", "TestNS")
+    yield buf
+    default_metrics._metrics.clear()
+
+
+def test_bootstrap_flushes_metrics_recorded_by_the_handler(
+    metrics_output: StringIO,
+) -> None:
+    @bootstrap
+    def handler(event, context):
+        default_metrics.count("Handled")
+        return {"statusCode": 200}
+
+    assert handler({}, _make_lambda_context()) == {"statusCode": 200}
+    assert json.loads(metrics_output.getvalue().strip())["Handled"] == 1.0
+
+
+def test_bootstrap_flushes_metrics_even_when_the_handler_raises(
+    metrics_output: StringIO,
+) -> None:
+    """The measurements taken before the failure are the ones worth having."""
+
+    @bootstrap
+    def handler(event, context):
+        default_metrics.count("Attempted")
+        raise ValueError("boom")
+
+    assert handler({}, _make_lambda_context()) == {"statusCode": 500}
+    assert json.loads(metrics_output.getvalue().strip())["Attempted"] == 1.0
+
+
+def test_worker_flushes_metrics_before_re_raising(metrics_output: StringIO) -> None:
+    @worker
+    def handler(event, context):
+        default_metrics.count("Attempted")
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        handler({}, _make_lambda_context())
+    assert json.loads(metrics_output.getvalue().strip())["Attempted"] == 1.0
+
+
+def test_no_output_when_the_handler_recorded_nothing(
+    metrics_output: StringIO,
+) -> None:
+    @bootstrap
+    def handler(event, context):
+        return {"statusCode": 200}
+
+    handler({}, _make_lambda_context())
+    assert metrics_output.getvalue() == ""
+
+
+def test_a_failing_flush_does_not_fail_a_successful_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing namespace is a configuration error, not a request failure."""
+    default_metrics._metrics.clear()
+    monkeypatch.setattr(default_metrics, "_output", StringIO())
+
+    @bootstrap
+    def handler(event, context):
+        default_metrics.count("Handled")
+        return {"statusCode": 200}
+
+    assert handler({}, _make_lambda_context()) == {"statusCode": 200}
+    default_metrics._metrics.clear()
+
+
+def test_a_failing_flush_does_not_mask_the_handler_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_metrics._metrics.clear()
+    monkeypatch.setattr(default_metrics, "_output", StringIO())
+
+    @worker
+    def handler(event, context):
+        default_metrics.count("Attempted")
+        raise ValueError("the real problem")
+
+    with pytest.raises(ValueError, match="the real problem"):
+        handler({}, _make_lambda_context())
+    default_metrics._metrics.clear()
+
+
+def test_a_failing_flush_is_logged() -> None:
+    with patch("wshtlib.decorators.logger") as mock_logger:
+
+        @bootstrap
+        def handler(event, context):
+            default_metrics.count("Handled")
+            return {"statusCode": 200}
+
+        handler({}, _make_lambda_context())
+
+    assert mock_logger.error.called
+    assert "flush metrics" in mock_logger.error.call_args[0][0]
+    default_metrics._metrics.clear()

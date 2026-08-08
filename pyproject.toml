@@ -1,7 +1,7 @@
 [project]
 name = "wshtlib"
-version = "0.3.0"
-description = "Shared runtime library for Wholeshoot services"
+version = "0.4.0"
+description = "Structured logging, EMF metrics, and request context for AWS Lambda"
 readme = "README.md"
 authors = [{ name = "Wholeshoot" }]
 license = { text = "MIT" }
@@ -26,6 +26,8 @@ dev = [
   "starlette>=1.3.1",
   "httpx",
   "boto3-stubs[secretsmanager]",
+  "jsonschema",
+  "types-jsonschema",
 ]
 
 [build-system]

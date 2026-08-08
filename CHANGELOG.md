@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.0] - 2026-08-08
+
+### Fixed
+- `count(...)` now counts. Recording a name repeatedly appended a duplicate metric definition each time while overwriting the single stored value, so five increments emitted five identical definitions and a value of `1`. Values now accumulate per name, and each name contributes exactly one definition. No test covered a repeated name — the existing multi-metric test used two different names, which is how it survived.
+- The `service` dimension is no longer always absent. `flush` read a context key that nothing in the library ever wrote, so every document was emitted undimensioned — meaning two functions publishing the same metric name wrote to the same time series. The test that appeared to cover it constructed the key by hand.
+- Documents can no longer exceed the embedded metric format's limits of 100 metric definitions and 100 values per metric. CloudWatch rejects an over-limit document whole, discarding every metric in it; crossing either limit now flushes and starts a new document instead.
+- The metrics namespace is read at flush time rather than at import. As a module-level constant it could not be set after import, or exercised by a test.
+
+### Added
+- `set_service(...)` sets the service name on the request context, and `resolve_service(...)` exposes the resolution order: explicit argument, request context, `WSHT_SERVICE_NAME`, then `AWS_LAMBDA_FUNCTION_NAME`.
+- `MetricsContext(namespace=..., service=..., output=...)`. `output` sets the context's default sink, including for the automatic flushes at the format's limits.
+- Log entries carry a `logger` field holding the name passed to `get_logger`.
+- `@bootstrap` and `@worker` flush the module-level metrics context when the handler returns, on both the success and the failure path. A failure to flush is logged rather than raised, so it cannot replace the handler's own outcome. A `MetricsContext` you create yourself is still yours to flush.
+
+### Changed
+- Logging and metrics resolve `service` through the same chain, so a log line and a metric emitted from the same context agree. Previously the logger reported the name given to `get_logger` while metrics reported nothing at all.
+- A metric name recorded more than once serialises as an array of values; a name recorded once still serialises as a bare number. CloudWatch derives Sum, Average, Minimum, Maximum and SampleCount from the array.
+- Recording one metric name under two different units raises `ValueError`. A single metric definition carries a single unit, so silently keeping one would mislabel real measurements.
+- A namespace is now required. `flush` raises `RuntimeError` when neither the constructor nor `WSHT_METRICS_NAMESPACE` supplies one, rather than falling back to a default that suited only the library's original consumer.
+- Every environment variable the library reads is now prefixed `WSHT_`. Unprefixed names like `SERVICE_NAME` and `ENVIRONMENT` are easily set by something else in the same process, and one of them feeds a metric dimension.
+
+### Upgrading
+Five changes are visible from outside, and three of them fail open — producing working software with the wrong configuration rather than an error:
+
+- **Rename the environment variables**: `LOG_LEVEL` → `WSHT_LOG_LEVEL`, `ENVIRONMENT` → `WSHT_ENVIRONMENT`, `METRICS_NAMESPACE` → `WSHT_METRICS_NAMESPACE`, `SERVICE_NAME` → `WSHT_SERVICE_NAME`. The old names are not consulted; missing one silently leaves the default in place.
+- **Set a namespace.** A flush without one raises where it previously used a built-in default. This one fails loudly.
+- **`service` in log output changes meaning.** It now names the deployment unit — under Lambda, the function name — where it previously held the argument to `get_logger`. That argument is still emitted, in the new `logger` field. Dashboards, metric filters, and saved queries keying on `service` will see a different value.
+- **Repeated metric names serialise as arrays.** Anything parsing the emitted JSON should expect either a number or a list of numbers.
+- **`put` may write to stdout** before `flush` is called, when a document reaches the format's limits.
+
 ## [0.3.0] - 2026-08-02
 
 ### Fixed

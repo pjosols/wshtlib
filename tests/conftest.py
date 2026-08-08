@@ -2,10 +2,48 @@
 
 import json
 import logging
+import os
+from collections.abc import Iterator
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from wshtlib.logger import _Logger
+
+# The JSON Schema published in the CloudWatch embedded metric format
+# specification. Validating against it checks the output against AWS's
+# definition rather than against our own idea of what we emit. Copied verbatim
+# but for an added "$schema": AWS omits it, and without the draft-07 declaration
+# its own "$id" fragments are rejected by newer drafts.
+EMF_SCHEMA = json.loads((Path(__file__).parent / "emf_schema.json").read_text())
+
+# Every environment variable that steers wshtlib. The service chain ends at
+# AWS_LAMBDA_FUNCTION_NAME, so a developer machine or CI job that happens to
+# export one of these would change the result of tests that never mention it.
+_WSHTLIB_ENV_VARS = (
+    "WSHT_LOG_LEVEL",
+    "WSHT_ENVIRONMENT",
+    "WSHT_METRICS_NAMESPACE",
+    "WSHT_SERVICE_NAME",
+    "AWS_LAMBDA_FUNCTION_NAME",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_wshtlib_env() -> Iterator[None]:
+    """Clear wshtlib's environment variables around every test.
+
+    Deliberately does not use ``monkeypatch``: requesting it from an autouse
+    fixture drags its setup earlier, which pushes its undo past xunit-style
+    ``teardown_method`` and breaks tests that patch ``sys.modules``.
+    """
+    saved = {key: os.environ.pop(key) for key in _WSHTLIB_ENV_VARS if key in os.environ}
+    try:
+        yield
+    finally:
+        os.environ.update(saved)
 
 
 def capture_log(log_fn, *args, **kwargs) -> dict:

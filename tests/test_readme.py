@@ -76,7 +76,7 @@ def test_metrics_count_put_flush_via_metrics_context() -> None:
     """README: MetricsContext has count/put/flush methods."""
     from wshtlib import MetricsContext
 
-    m = MetricsContext()
+    m = MetricsContext(namespace="OrderService")
     m.count("OrderPlaced")
     m.put("Duration", 142.5, unit="Milliseconds")
     out = io.StringIO()
@@ -148,34 +148,52 @@ def test_require_https_url_accepts_https() -> None:
     assert require_https_url(url) == url
 
 
-def test_readme_metrics_import_is_runnable() -> None:
+def test_readme_metrics_import_is_runnable(monkeypatch: pytest.MonkeyPatch) -> None:
     """README: 'from wshtlib.metrics import metrics' then metrics.count() works."""
     from wshtlib.metrics import metrics
 
-    # Should not raise — count is a method on MetricsContext instance
+    monkeypatch.setenv("WSHT_METRICS_NAMESPACE", "ReadmeNS")
     metrics.count("ReadmeTest")
+    # Drain the module-level instance so the recording does not leak into
+    # another test through the decorators' flush-on-exit.
+    assert metrics.flush(io.StringIO()) is not None
 
 
 def test_metrics_namespace_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    """README: METRICS_NAMESPACE env var sets CloudWatch namespace."""
+    """README: WSHT_METRICS_NAMESPACE sets the CloudWatch namespace."""
+    import json
 
-    import wshtlib.metrics as m_mod
+    from wshtlib import MetricsContext
 
-    monkeypatch.setenv("METRICS_NAMESPACE", "TestNS")
-    # _NAMESPACE is read at import time; verify the env var is documented correctly
-    assert m_mod._NAMESPACE == "Wholeshoot" or isinstance(m_mod._NAMESPACE, str)
+    monkeypatch.setenv("WSHT_METRICS_NAMESPACE", "TestNS")
+    m = MetricsContext()
+    m.count("Test")
+    out = io.StringIO()
+    m.flush(output=out)
+    emf = json.loads(out.getvalue())
+    assert emf["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "TestNS"
+
+
+def test_metrics_namespace_is_required() -> None:
+    """README: a flush with no namespace configured raises."""
+    from wshtlib import MetricsContext
+
+    m = MetricsContext()
+    m.count("Test")
+    with pytest.raises(RuntimeError):
+        m.flush(output=io.StringIO())
 
 
 def test_environment_env_var_added_as_dimension(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """README: ENVIRONMENT env var is added as a metrics dimension if set."""
+    """README: WSHT_ENVIRONMENT is added as a metrics dimension if set."""
     import json
 
     from wshtlib import MetricsContext
 
-    monkeypatch.setenv("ENVIRONMENT", "prod")
-    m = MetricsContext()
+    monkeypatch.setenv("WSHT_ENVIRONMENT", "prod")
+    m = MetricsContext(namespace="TestNS")
     m.count("Test")
     out = io.StringIO()
     m.flush(output=out)
@@ -183,15 +201,42 @@ def test_environment_env_var_added_as_dimension(
     assert emf.get("environment") == "prod"
 
 
+def test_service_name_env_var_added_as_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """README: WSHT_SERVICE_NAME is added as the service dimension."""
+    import json
+
+    from wshtlib import MetricsContext
+
+    monkeypatch.setenv("WSHT_SERVICE_NAME", "orders")
+    m = MetricsContext(namespace="TestNS")
+    m.count("Test")
+    out = io.StringIO()
+    m.flush(output=out)
+    assert json.loads(out.getvalue()).get("service") == "orders"
+
+
+def test_set_service_is_exported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """README: set_service overrides the resolved service name."""
+    from wshtlib import clear_context, resolve_service, set_service
+
+    clear_context()
+    monkeypatch.setenv("WSHT_SERVICE_NAME", "from-env")
+    set_service("explicit")
+    assert resolve_service() == "explicit"
+    clear_context()
+
+
 def test_log_level_env_var_applied_to_new_logger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """README: LOG_LEVEL env var is applied when creating a new logger."""
+    """README: WSHT_LOG_LEVEL is applied when creating a new logger."""
     import logging
 
     import wshtlib.logger as log_mod
 
-    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("WSHT_LOG_LEVEL", "DEBUG")
     # Use a unique name to avoid hitting the cache
     logger = log_mod.get_logger("_readme_test_debug_logger")
     assert logger.level == logging.DEBUG

@@ -35,6 +35,7 @@ _RESERVED_KEYS = frozenset(
         "message",
         "timestamp",
         "service",
+        "logger",
         "trace_id",
         "exception",
         "runtime",
@@ -106,13 +107,31 @@ class _JsonFormatter(logging.Formatter):
         except (ImportError, AttributeError):
             return None
 
+    def _get_service(self, record: logging.LogRecord) -> str:
+        """Resolve the service name, falling back to the logger's own name.
+
+        Shares ``resolve_service`` with metrics so both report the same value;
+        ``record.name`` is the tail, used only where nothing else supplies one.
+
+        record: The log record being formatted.
+        """
+        try:
+            # Lazy import avoids circular dependency with wshtlib.context.
+            from wshtlib.context import resolve_service
+
+            resolved = resolve_service(getattr(record, "service", None))
+        except (ImportError, AttributeError):
+            resolved = getattr(record, "service", None)
+        return resolved or record.name
+
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
             "level": record.levelname,
             "location": f"{record.funcName}:{record.lineno}",
             "message": record.getMessage(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "service": getattr(record, "service", record.name),
+            "service": self._get_service(record),
+            "logger": record.name,
         }
         entry.update(_RUNTIME_FIELDS)
         entry.update(self._lambda_context)
@@ -312,7 +331,7 @@ def get_logger(service_name: str) -> "_Logger":
     if isinstance(existing, _Logger):
         return existing
     logger = _Logger(service_name)
-    logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+    logger.setLevel(os.getenv("WSHT_LOG_LEVEL", "INFO"))
     logging.Logger.manager.loggerDict[service_name] = logger
     return logger
 

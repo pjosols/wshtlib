@@ -63,11 +63,11 @@ logger = get_logger("my-service")
 logger.info("user signed in", user_id="u_123", plan="pro")
 ```
 
-Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `location`, runtime fields, and Lambda context on invocation. `location` names the calling function and line.
+Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `logger`, `location`, runtime fields, and Lambda context on invocation. `location` names the calling function and line. `logger` is the name passed to `get_logger`; `service` names the deployment unit and is resolved the same way metrics resolve it — see [Service name](#service-name).
 
 Keyword arguments are the preferred spelling, but stdlib's `extra={...}` works too and lands in the same JSON entry; kwargs win if both supply the same key. Fields are also set as attributes on the `LogRecord`, so custom filters and `%(field)s` formatters can read them.
 
-Field names are unrestricted — including `msg`, `args`, and `level`. Only `exc_info`, `extra`, `stack_info`, and `stacklevel` keep their stdlib meanings and cannot be used as fields. A field whose name collides with one the formatter owns (`level`, `message`, `timestamp`, `service`, `location`, `trace_id`, `exception`, and the runtime/Lambda fields) is emitted with an `extra_` prefix rather than replacing it:
+Field names are unrestricted — including `msg`, `args`, and `level`. Only `exc_info`, `extra`, `stack_info`, and `stacklevel` keep their stdlib meanings and cannot be used as fields. A field whose name collides with one the formatter owns (`level`, `message`, `timestamp`, `service`, `logger`, `location`, `trace_id`, `exception`, and the runtime/Lambda fields) is emitted with an `extra_` prefix rather than replacing it:
 
 ```python
 logger.info("subscription renewed", level="premium")
@@ -86,9 +86,36 @@ metrics.put("Duration", 142.5, unit="Milliseconds")
 metrics.flush()
 ```
 
-`metrics` is a module-level `MetricsContext` instance. For isolated contexts (e.g. per-request), instantiate `MetricsContext()` directly.
+`metrics` is a module-level `MetricsContext` instance, and `@bootstrap`/`@worker` flush it for you when the handler returns. For isolated contexts (e.g. per-request), instantiate `MetricsContext()` directly — one you create yourself is one you flush yourself.
 
-Namespace defaults to the `METRICS_NAMESPACE` env var, falling back to `"Wholeshoot"`.
+**A namespace is required.** Pass `MetricsContext(namespace=...)` or set `WSHT_METRICS_NAMESPACE`; `flush` raises `RuntimeError` if neither does. It is resolved per flush, so setting the variable after import works.
+
+Recording the same name more than once keeps every value rather than replacing it:
+
+```python
+metrics.count("OrderPlaced")
+metrics.count("OrderPlaced")
+metrics.put("Duration", 50.0, unit="Milliseconds")
+metrics.put("Duration", 60.0, unit="Milliseconds")
+# {"OrderPlaced": [1.0, 1.0], "Duration": [50.0, 60.0], ...}
+```
+
+CloudWatch derives Sum, Average, Minimum, Maximum and SampleCount from those arrays, so a counter's total is its Sum. A name recorded once serialises as a bare number. Recording one name under two different units raises `ValueError` — a single metric definition carries a single unit, and picking one silently would mislabel real measurements.
+
+EMF caps a document at 100 metric definitions and 100 values per metric, and CloudWatch rejects an over-limit document whole — losing every metric in it, not just the one that overflowed. Crossing either limit therefore flushes the accumulated metrics and starts a new document, so `put` may write before you call `flush`.
+
+### Service name
+
+Logging and metrics resolve the service through `resolve_service`, taking the first that supplies a value:
+
+1. an explicit argument — `MetricsContext(service=...)`
+2. the request context — `set_service("checkout")`
+3. `WSHT_SERVICE_NAME`
+4. `AWS_LAMBDA_FUNCTION_NAME`, which Lambda always sets
+
+A log line and a metric emitted from the same context therefore report the same `service`. If nothing supplies a value, logs fall back to the logger's own name and metrics omit the dimension rather than invent one.
+
+Keep dimensions low-cardinality: every unique combination becomes its own CloudWatch metric and bills accordingly.
 
 ### Request context
 
@@ -125,11 +152,14 @@ api_key = require_secret("api/key")           # raises RuntimeError if missing/e
 
 ## Environment variables
 
+Every variable wshtlib reads is prefixed, so nothing else in the environment can steer it by accident.
+
 | Variable | Default | Description |
 |---|---|---|
-| `LOG_LEVEL` | `INFO` | Logger level |
-| `METRICS_NAMESPACE` | `Wholeshoot` | CloudWatch namespace |
-| `ENVIRONMENT` | — | Added as a metrics dimension if set |
+| `WSHT_LOG_LEVEL` | `INFO` | Logger level |
+| `WSHT_METRICS_NAMESPACE` | — | CloudWatch namespace. Required unless passed to `MetricsContext` |
+| `WSHT_SERVICE_NAME` | — | `service` dimension and log field, unless set explicitly |
+| `WSHT_ENVIRONMENT` | — | Added as a metrics dimension if set |
 
 ## Development
 
