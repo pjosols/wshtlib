@@ -174,11 +174,15 @@ Every variable wshtlib reads is prefixed, so nothing else in the environment can
 
 ## Development
 
+Everything CI runs, in the order it runs it:
+
 ```bash
 uv sync --group dev
 uv run pytest
 uv run mypy wshtlib
-uv run ruff check wshtlib
+uv run ruff check wshtlib          # includes flake8-bandit (S) rules
+uv run black --check wshtlib tests
+uv run zizmor --no-progress .github/workflows/
 ```
 
 ## License
