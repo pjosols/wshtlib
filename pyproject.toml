@@ -28,6 +28,7 @@ dev = [
   "boto3-stubs[secretsmanager]",
   "jsonschema",
   "types-jsonschema",
+  "zizmor",
 ]
 
 [build-system]
@@ -46,7 +47,13 @@ target-version = ["py313"]
 profile = "black"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "DTZ"]
+# S is flake8-bandit: the same checks bandit makes, run in the linter that
+# already gates CI, so they cannot be forgotten between audits.
+select = ["E", "F", "I", "DTZ", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# S101 is "assert used", which is what a test is made of.
+"tests/**" = ["S101"]
 
 [tool.mypy]
 strict = true
