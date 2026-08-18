@@ -1,4 +1,4 @@
-"""Emit structured JSON logs to stdout with runtime and Lambda context enrichment."""
+"""Emit structured JSON logs to stderr with runtime and Lambda context enrichment."""
 
 import json
 import logging

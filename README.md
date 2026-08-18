@@ -52,7 +52,7 @@ def handler(event, context):
     logger.info("processing", records=len(event["Records"]))
 ```
 
-Same context init and structured error logging, but the exception is **re-raised** rather than swallowed — retries, `on_failure` destinations, the DLQ, and the `Errors` metric all depend on Lambda seeing the invocation fail. No warming-event handling.
+`@worker` does the same context init and structured error logging, but it **re-raises** the exception instead of returning a 500. Lambda has to see the invocation fail: retries, `on_failure` destinations, the DLQ, and the `Errors` metric all depend on it. Warming events are not handled.
 
 ### Structured logging
 
@@ -63,18 +63,18 @@ logger = get_logger("my-service")
 logger.info("user signed in", user_id="u_123", plan="pro")
 ```
 
-Output is JSON to stdout, enriched with `level`, `timestamp`, `service`, `logger`, `location`, runtime fields, and Lambda context on invocation. `location` names the calling function and line. `logger` is the name passed to `get_logger`; `service` names the deployment unit and is resolved the same way metrics resolve it — see [Service name](#service-name).
+Output is JSON to stderr, keeping stdout clear for EMF metric documents. Each entry includes `level`, `timestamp`, `service`, `logger`, `location` (the calling function and line), runtime fields, and Lambda context during an invocation. `logger` is the name you passed to `get_logger`. `service` names the deployment unit, resolved the same way metrics resolve it — see [Service name](#service-name).
 
-Keyword arguments are the preferred spelling, but stdlib's `extra={...}` works too and lands in the same JSON entry; kwargs win if both supply the same key. Fields are also set as attributes on the `LogRecord`, so custom filters and `%(field)s` formatters can read them.
+Keyword arguments are the preferred spelling, but stdlib's `extra={...}` works too and lands in the same JSON entry. If both supply the same key, the kwarg wins. Fields are also set as attributes on the `LogRecord`, so custom filters and `%(field)s` formatters can read them — except names that collide with a stdlib record attribute or a reserved name (below), which appear only in the JSON entry.
 
-Field names are unrestricted — including `msg`, `args`, and `level`. Only `exc_info`, `extra`, `stack_info`, and `stacklevel` keep their stdlib meanings and cannot be used as fields. A field whose name collides with one the formatter owns (`level`, `message`, `timestamp`, `service`, `logger`, `location`, `trace_id`, `exception`, and the runtime/Lambda fields) is emitted with an `extra_` prefix rather than replacing it:
+Almost any field name is allowed, including `msg`, `args`, and `level`. The only exceptions are `exc_info`, `extra`, `stack_info`, and `stacklevel`, which keep their stdlib meanings. If a field name collides with one the formatter itself writes (`level`, `message`, `timestamp`, `service`, `logger`, `location`, `trace_id`, `exception`, and the runtime/Lambda fields), the field is emitted with an `extra_` prefix instead of replacing the formatter's value:
 
 ```python
 logger.info("subscription renewed", level="premium")
 # {"level": "INFO", ..., "message": "subscription renewed", "extra_level": "premium"}
 ```
 
-This keeps an enrichment field from falsifying the record it was meant to enrich.
+Your field still lands in the entry, but it can never overwrite the entry's own metadata.
 
 ### CloudWatch metrics (EMF)
 
@@ -86,11 +86,11 @@ metrics.put("Duration", 142.5, unit="Milliseconds")
 metrics.flush()
 ```
 
-`metrics` is a module-level `MetricsContext` instance, and `@bootstrap`/`@worker` flush it for you when the handler returns. For isolated contexts (e.g. per-request), instantiate `MetricsContext()` directly — one you create yourself is one you flush yourself.
+`metrics` is a module-level `MetricsContext` instance, and `@bootstrap`/`@worker` flush it for you when the handler returns. For an isolated context (e.g. per-request), instantiate `MetricsContext()` directly. A context you create yourself is one you flush yourself.
 
-A context is safe to record into and flush from several threads at once. What sharing one still costs you is attribution: a shared context accumulates everything into a single document and resolves its dimensions when it flushes, so under a concurrent server a metric recorded while serving one request can be flushed by another and stamped with that request's `service`. Where that matters, use a context per request or bind `service=` when you construct it.
+A single context is thread-safe: several threads can record into it and flush it at the same time. The catch is attribution. A shared context collects all metrics into one document, and it resolves its dimensions at flush time. In a concurrent server, that means a metric recorded while serving one request can be flushed during another request and stamped with *that* request's `service`. If that matters for your metrics, create a context per request, or pass `service=` when you construct the context so the value never depends on who flushes it.
 
-**A namespace is required.** Pass `MetricsContext(namespace=...)` or set `WSHT_METRICS_NAMESPACE`; `flush` raises `RuntimeError` if neither does. It is resolved per flush, so setting the variable after import works.
+**A namespace is required.** Pass `MetricsContext(namespace=...)` or set `WSHT_METRICS_NAMESPACE`. If neither is set, `flush` raises `RuntimeError` when there are metrics to write; an empty flush is a no-op. The namespace is resolved on each flush, so setting the variable after import works.
 
 Recording the same name more than once keeps every value rather than replacing it:
 
@@ -102,11 +102,11 @@ metrics.put("Duration", 60.0, unit="Milliseconds")
 # {"OrderPlaced": [1.0, 1.0], "Duration": [50.0, 60.0], ...}
 ```
 
-CloudWatch derives Sum, Average, Minimum, Maximum and SampleCount from those arrays, so a counter's total is its Sum. A name recorded once serialises as a bare number. Recording one name under two different units raises `ValueError` — a single metric definition carries a single unit, and picking one silently would mislabel real measurements.
+CloudWatch derives Sum, Average, Minimum, Maximum, and SampleCount from those arrays, so a counter's total is its Sum. A name recorded only once serializes as a bare number. Recording one name with two different units raises `ValueError`: a metric definition has exactly one unit, and silently picking one would mislabel real measurements.
 
-Three names are refused outright, also with `ValueError`: `service`, `environment`, and `_aws`. Metric values sit at the root of the document beside the dimensions and the directive that describes it, so a metric borrowing one of those names overwrites it — and CloudWatch rejects the resulting document whole, losing every metric in it.
+Three names are rejected with `ValueError`: `service`, `environment`, and `_aws`. In the EMF document, metric values sit at the root next to the dimensions and the `_aws` directive. A metric with one of those names would overwrite that data, and CloudWatch would then reject the whole document — losing every metric in it, not just the bad one.
 
-EMF caps a document at 100 metric definitions and 100 values per metric, and CloudWatch rejects an over-limit document whole — losing every metric in it, not just the one that overflowed. Crossing either limit therefore flushes the accumulated metrics and starts a new document, so `put` may write before you call `flush`.
+EMF also caps a document at 100 metric definitions and 100 values per metric, and again an over-limit document is rejected whole. So when a recording would cross either limit, the context flushes what it has and starts a new document. That means `put` can write output before you ever call `flush`.
 
 ### Service name
 
@@ -117,9 +117,9 @@ Logging and metrics resolve the service through `resolve_service`, taking the fi
 3. `WSHT_SERVICE_NAME`
 4. `AWS_LAMBDA_FUNCTION_NAME`, which Lambda always sets
 
-A log line and a metric emitted from the same context therefore report the same `service`. If nothing supplies a value, logs fall back to the logger's own name and metrics omit the dimension rather than invent one.
+A log line and a metric emitted from the same context therefore report the same `service`. If nothing supplies a value, logs fall back to the logger's own name, and metrics simply omit the dimension.
 
-`set_service` is initialisation-time configuration: call it at import, where it survives the context reset that `@bootstrap` and `@worker` perform on every invocation. It travels the way any `ContextVar` does, which is to say not into threads — a `def` endpoint running in Starlette's threadpool, anything under `TestClient`, or a call made from a FastAPI lifespan handler will not see it. Use `WSHT_SERVICE_NAME` for a value that must hold process-wide.
+`set_service` is initialization-time configuration. Call it at import, where it survives the context reset that `@bootstrap` and `@worker` perform on every invocation. Because it lives in a `ContextVar`, it does not propagate into threads: a `def` endpoint running in Starlette's threadpool, anything under `TestClient`, and calls made from a FastAPI lifespan handler will not see it. Use `WSHT_SERVICE_NAME` when the value must hold process-wide.
 
 Keep dimensions low-cardinality: every unique combination becomes its own CloudWatch metric and bills accordingly.
 
@@ -144,9 +144,9 @@ app = FastAPI()
 app.add_middleware(WshtlibMiddleware)
 ```
 
-Initialises request context, logs `method`, `path`, `status`, `duration_ms` per request, and injects `X-Trace-Id` into the response.
+Initializes request context, logs `method`, `path`, `status`, `duration_ms` per request, and — when the request carried an `X-Amzn-Trace-Id` header — echoes the trace id back as `X-Trace-Id` on the response.
 
-A request whose handler raises is logged too — at `error`, with `status` 500 and the traceback — and the exception is then re-raised so your own exception handlers still decide the response. No `X-Trace-Id` accompanies that path, there being no response yet to carry it.
+A request whose handler raises is still logged, at `error` level with `status` 500 and the traceback. The exception is then re-raised so your own exception handlers decide the response. On that path there is no response yet to carry a header, so no `X-Trace-Id` is set.
 
 ### Utilities
 
@@ -158,11 +158,11 @@ endpoint = require_https_url(require_env("API_URL"))  # raises ValueError if not
 api_key = require_secret("api/key")           # raises RuntimeError if missing/empty, cached
 ```
 
-Secrets are cached for `WSHT_SECRET_CACHE_TTL` seconds, 300 by default. The lifetime is the point: a Lambda execution environment outlives a rotation by hours, so a secret cached indefinitely goes on being served after it stops working. Call `clear_secret_cache()` to discard the cache at once.
+Secrets are cached for `WSHT_SECRET_CACHE_TTL` seconds (default 300). The TTL matters because a Lambda execution environment can outlive a secret rotation by hours: a secret cached forever would keep being served after it stops working. Call `clear_secret_cache()` to drop the whole cache immediately.
 
 ## Environment variables
 
-Every variable wshtlib reads is prefixed, so nothing else in the environment can steer it by accident.
+Every variable wshtlib reads starts with `WSHT_`, so other environment variables can't affect it by accident.
 
 | Variable | Default | Description |
 |---|---|---|
